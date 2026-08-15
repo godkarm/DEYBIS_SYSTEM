@@ -286,7 +286,7 @@ input::placeholder { color: var(--muted); }
 </div>
 
 <script>
-const BASE = '<?= rtrim(dirname($_SERVER["SCRIPT_NAME"]), "/") ?>';
+const BASE = '<?= BASE_URL ?>';
 
 /* ── Toggle contraseña ────────────────────────────────────── */
 const eyeBtn  = document.getElementById('eyeBtn');
@@ -309,10 +309,12 @@ function hideAlert() {
 }
 
 /* ── Login ────────────────────────────────────────────────── */
-document.getElementById('loginForm').addEventListener('submit', async e => {
+  document.getElementById('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   hideAlert();
-
+  console.log('BASE vale:', BASE);
+  console.log('URL del fetch:', BASE + '/api/login');
+ 
   const usuario  = document.getElementById('usuario').value.trim();
   const password = document.getElementById('password').value;
 

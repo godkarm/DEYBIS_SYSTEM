@@ -5,14 +5,11 @@ ServerSignature Off
     RewriteEngine On
     RewriteBase /deybis_system/public/
 
-    # Archivos reales no se reescriben
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
-
-    RewriteRule ^ index.php [QSA,L]
+    RewriteRule ^(.*)$ index.php [QSA,L]
 </IfModule>
 
-# Bloquear archivos sensibles
 <FilesMatch "\.(env|sql|log|lock|git)$">
     Order allow,deny
     Deny from all
