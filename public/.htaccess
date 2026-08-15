@@ -1,0 +1,28 @@
+Options -Indexes
+ServerSignature Off
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /deybis_system/public/
+
+    # Archivos reales no se reescriben
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Bloquear archivos sensibles
+<FilesMatch "\.(env|sql|log|lock|git)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+<IfModule mod_php.c>
+    php_value session.cookie_httponly 1
+    php_value session.use_strict_mode 1
+</IfModule>
+<IfModule mod_php8.c>
+    php_value session.cookie_httponly 1
+    php_value session.use_strict_mode 1
+</IfModule>
