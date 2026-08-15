@@ -49,20 +49,35 @@ class UsuarioController {
     }
 
     public function update(): void {
-        Auth::requireSeccion('usuarios');
-        Auth::requireRol(['ADMINISTRADOR']);
-        $body    = json_decode(file_get_contents('php://input'), true) ?? [];
-        $usuario = strtolower(trim($body['usuario'] ?? ''));
+    Auth::requireSeccion('usuarios');
+    Auth::requireRol(['ADMINISTRADOR']);
+    $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+    $usuario = strtolower(trim($body['usuario'] ?? ''));
 
-        $cuenta = $this->model->findByUsername($usuario);
-        if (!$cuenta) Response::error('Usuario no encontrado.', 404);
+    $cuenta = $this->model->findByUsername($usuario);
+    if (!$cuenta) Response::error('Usuario no encontrado.', 404);
 
-        $cambios = [];
-        if (!empty($body['password'])) $cambios['password'] = $body['password'];
-        if (!empty($body['estado']))   $cambios['estado']   = strtoupper($body['estado']);
+    $cambios = [];
+    if (!empty($body['password'])) $cambios['password'] = $body['password'];
+    if (!empty($body['estado']))   $cambios['estado']   = strtoupper($body['estado']);
 
-        $this->model->update($cuenta['id'], $cambios);
-        Response::ok(null, 'Usuario actualizado.');
+    if (!empty($body['rol'])) {
+        $roles = ['ADMINISTRADOR' => 1, 'ALMACENERO' => 2, 'CLIENTE' => 3];
+        $rol   = strtoupper(trim($body['rol']));
+        if (!isset($roles[$rol])) Response::error("Rol inválido: {$rol}");
+        $cambios['id_rol'] = $roles[$rol];
+
+        if ($rol === 'CLIENTE') {
+            $cli = $this->clienteModel->findByCodigo($body['cliente'] ?? '');
+            if (!$cli) Response::error('Debe seleccionar un cliente válido para rol CLIENTE.');
+            $cambios['id_cliente'] = $cli['id'];
+        } else {
+            $cambios['id_cliente'] = null;
+        }
+    }
+
+    $this->model->update($cuenta['id'], $cambios);
+    Response::ok(null, 'Usuario actualizado correctamente.');
     }
 
     public function permisos(): void {
@@ -115,5 +130,22 @@ class UsuarioController {
 
         $this->permisoModel->deleteOverride($cuenta['id'], $seccion['id']);
         Response::ok(null, 'Override eliminado. El usuario hereda el permiso de su rol.');
+    }
+
+    public function destroy(): void {
+    Auth::requireSeccion('usuarios');
+    Auth::requireRol(['ADMINISTRADOR']);
+    $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+    $usuario = strtolower(trim($body['usuario'] ?? ''));
+
+    if ($usuario === 'admin') {
+        Response::error('No se puede eliminar el usuario admin.');
+    }
+
+    $cuenta = $this->model->findByUsername($usuario);
+    if (!$cuenta) Response::error('Usuario no encontrado.', 404);
+
+    $this->model->delete($cuenta['id']);
+    Response::ok(null, 'Usuario eliminado correctamente.');
     }
 }

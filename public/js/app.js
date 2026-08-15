@@ -162,12 +162,7 @@ $('btnCollapseNav').addEventListener('click', () => {
   const mc = $('mainContent');
   sb.classList.toggle('collapsed');
   mc.classList.toggle('collapsed');
-  localStorage.setItem('sb-collapsed', sb.classList.contains('collapsed'));
 });
-if (localStorage.getItem('sb-collapsed') === 'true') {
-  $('sidebar').classList.add('collapsed');
-  $('mainContent').classList.add('collapsed');
-}
 
 /* ── Mobile menu ───────────────────────────────────────────── */
 $('btnMobileMenu').addEventListener('click', () => {
@@ -1094,21 +1089,36 @@ registerTab('usuarios', async area => {
   });
   $('btnCancelarUsr')?.addEventListener('click', () => { $('formNuevoUsr').style.display = 'none'; });
 
+ api('GET', '/api/clientes', { activos:'1' }).then(r => {
+    if (!r?.data?.length) {
+      $('usrCliente').insertAdjacentHTML('beforeend',
+        `<option value="" disabled>Sin clientes activos</option>`);
+      return;
+    }
+    r.data.forEach(c => {
+      $('usrCliente').insertAdjacentHTML('beforeend',
+        `<option value="${c.codigo}">${c.nombre}</option>`);
+    });
+  });
+
   $('usrRol').addEventListener('change', function () {
-    $('usrClienteWrap').style.display = this.value === 'CLIENTE' ? 'block' : 'none';
+    const wrap = $('usrClienteWrap');
+    wrap.style.display = this.value === 'CLIENTE' ? 'block' : 'none';
+    if (this.value !== 'CLIENTE') $('usrCliente').value = '';
   });
 
-  // Cargar clientes activos en selector
-  api('GET', '/api/clientes', { activos:'1' }).then(r => {
-    r?.data?.forEach(c => { $('usrCliente').insertAdjacentHTML('beforeend', `<option value="${c.codigo}">${c.nombre}</option>`); });
-  });
+async function cargarUsuarios() {
+    const [r, clientes] = await Promise.all([
+      api('GET', '/api/usuarios'),
+      api('GET', '/api/clientes', { activos: '1' }),
+    ]);
+    const optsCli = (clientes?.data || []).map(c =>
+      `<option value="${c.codigo}">${c.nombre}</option>`).join('');
 
-  async function cargarUsuarios() {
-    const r = await api('GET', '/api/usuarios');
     $('tablaUsuarios').innerHTML = r?.data?.length
       ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
           <table class="ds-table">
-            <thead><tr><th>Usuario</th><th>Rol</th><th>Cliente</th><th>Estado</th><th>Acción</th></tr></thead>
+            <thead><tr><th>Usuario</th><th>Rol</th><th>Cliente</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>${r.data.map(u => `
               <tr>
                 <td class="td-primary">${u.usuario}</td>
@@ -1116,11 +1126,25 @@ registerTab('usuarios', async area => {
                 <td style="color:var(--text-muted)">${u.cliente_nombre||'—'}</td>
                 <td><span class="badge ${u.estado==='ACTIVO'?'badge-active':'badge-inactive'}">${u.estado}</span></td>
                 <td>
-                  <button class="btn btn-xs ${u.estado==='ACTIVO'?'btn-danger':'btn-success'} btn-toggle-usr"
-                    data-usuario="${u.usuario}" data-estado="${u.estado==='ACTIVO'?'INACTIVO':'ACTIVO'}">
-                    <i class="bi ${u.estado==='ACTIVO'?'bi-pause-circle':'bi-play-circle'}"></i>
-                    ${u.estado==='ACTIVO'?'Inactivar':'Activar'}
-                  </button>
+                  <div class="btn-group">
+         <button class="btn btn-xs btn-secondary btn-editar-usr"
+               data-usuario="${u.usuario}"
+               data-rol="${u.rol}"
+               data-cliente="${u.cliente_codigo||''}"
+   data-estado="${u.estado}">
+  <i class="bi bi-pencil"></i>Editar
+</button>
+<button class="btn btn-xs ${u.estado==='ACTIVO'?'btn-danger':'btn-success'} btn-toggle-usr"
+  data-usuario="${u.usuario}" data-estado="${u.estado==='ACTIVO'?'INACTIVO':'ACTIVO'}">
+  <i class="bi ${u.estado==='ACTIVO'?'bi-pause-circle':'bi-play-circle'}"></i>
+  ${u.estado==='ACTIVO'?'Inactivar':'Activar'}
+</button>
+${u.usuario !== 'admin' ? `
+<button class="btn btn-xs btn-danger btn-eliminar-usr"
+  data-usuario="${u.usuario}">
+  <i class="bi bi-trash"></i>Eliminar
+</button>` : ''}
+</div>
                 </td>
               </tr>`).join('')}
             </tbody>
@@ -1128,11 +1152,79 @@ registerTab('usuarios', async area => {
         </div>`
       : `<div style="padding:24px;text-align:center;color:var(--text-muted)">Sin usuarios.</div>`;
 
-    $$('.btn-toggle-usr').forEach(btn => {
+    $$('.btn-eliminar-usr').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const r2 = await api('POST', '/api/usuarios/actualizar', { usuario: btn.dataset.usuario, estado: btn.dataset.estado });
+        if (!confirm(`¿Eliminar el usuario "${btn.dataset.usuario}"? Esta acción no se puede deshacer.`)) return;
+        const r2 = await api('POST', '/api/usuarios/eliminar', { usuario: btn.dataset.usuario });
         toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
         if (r2?.ok) cargarUsuarios();
+      });
+    });
+
+    $$('.btn-editar-usr').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const usuario = btn.dataset.usuario;
+        const rolActual = btn.dataset.rol;
+        const clienteActual = btn.dataset.cliente;
+        const estadoActual = btn.dataset.estado;
+
+        openModal(
+          `<i class="bi bi-pencil"></i> Editar Usuario: ${usuario}`,
+          `<div class="ds-field">
+            <label class="ds-label">Nueva Contraseña <span style="color:var(--text-muted);font-weight:400">(dejar vacío para no cambiar)</span></label>
+            <input type="password" id="editPass" class="ds-input" placeholder="••••••">
+          </div>
+          <div class="ds-field">
+            <label class="ds-label">Rol</label>
+            <select id="editRol" class="ds-select">
+              <option value="ADMINISTRADOR" ${rolActual==='ADMINISTRADOR'?'selected':''}>Administrador</option>
+              <option value="ALMACENERO"    ${rolActual==='ALMACENERO'?'selected':''}>Almacenero</option>
+              <option value="CLIENTE"       ${rolActual==='CLIENTE'?'selected':''}>Cliente</option>
+            </select>
+          </div>
+          <div class="ds-field" id="editClienteWrap" style="display:${rolActual==='CLIENTE'?'block':'none'}">
+            <label class="ds-label">Cliente Asociado</label>
+            <select id="editCliente" class="ds-select">
+              <option value="">— Seleccione —</option>
+              ${optsCli}
+            </select>
+          </div>
+          <div class="ds-field">
+            <label class="ds-label">Estado</label>
+            <select id="editEstado" class="ds-select">
+              <option value="ACTIVO"   ${estadoActual==='ACTIVO'?'selected':''}>Activo</option>
+              <option value="INACTIVO" ${estadoActual==='INACTIVO'?'selected':''}>Inactivo</option>
+            </select>
+          </div>`,
+          `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+           <button class="btn btn-primary" id="btnGuardarEdit"><i class="bi bi-check-lg"></i>Guardar cambios</button>`
+        );
+
+        // Setear cliente actual en el select
+        if (clienteActual && document.getElementById('editCliente')) {
+          document.getElementById('editCliente').value = clienteActual;
+        }
+
+        // Mostrar/ocultar selector de cliente según rol
+        document.getElementById('editRol').addEventListener('change', function() {
+          document.getElementById('editClienteWrap').style.display =
+            this.value === 'CLIENTE' ? 'block' : 'none';
+        });
+
+        document.getElementById('btnGuardarEdit').addEventListener('click', async () => {
+          const payload = {
+            usuario : usuario,
+            rol     : document.getElementById('editRol').value,
+            estado  : document.getElementById('editEstado').value,
+            cliente : document.getElementById('editCliente')?.value || '',
+          };
+          const pass = document.getElementById('editPass').value;
+          if (pass) payload.password = pass;
+
+          const r2 = await api('POST', '/api/usuarios/actualizar', payload);
+          toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+          if (r2?.ok) { closeModal(); cargarUsuarios(); }
+        });
       });
     });
   }

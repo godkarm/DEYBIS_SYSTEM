@@ -81,4 +81,8 @@ class UsuarioModel {
         $stmt->execute([$id]);
         return $stmt->fetch() ?: null;
     }
+    public function delete(int $id): void {
+    $this->db->prepare("DELETE FROM usuarios WHERE id = ?")
+             ->execute([$id]);
+    }
 }

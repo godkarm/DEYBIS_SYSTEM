@@ -119,6 +119,7 @@ $routes = [
     'POST /api/usuarios/permisos'          => ['UsuarioController',      'setPermiso'],
     'POST /api/usuarios/permisos/quitar'   => ['UsuarioController',      'quitarOverride'],
     'GET /app'                             => ['AppController',          'index'],
+    'POST /api/usuarios/eliminar' => ['UsuarioController', 'destroy'],
 ];
 
 if (isset($routes[$key])) {

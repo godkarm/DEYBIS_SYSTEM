@@ -425,6 +425,18 @@ body {
   width         : 0;
   overflow      : hidden;
 }
+
+#sidebar.collapsed .sb-collapse-btn {
+  opacity        : 1 !important;
+  pointer-events : all !important;
+  width          : auto !important;
+  overflow       : visible !important;
+  display        : flex !important;
+}
+
+#sidebar.collapsed .sb-brand {
+  justify-content: center;
+}
 #sidebar.collapsed .sb-link {
   justify-content: center;
   padding       : 9px;
@@ -1176,3 +1188,14 @@ body {
 [data-theme="light"] .sb-select option { background: #fff; color: #0F172A; }
 [data-theme="light"] .ds-toast-success { background: rgba(16,185,129,.1); }
 [data-theme="light"] .ds-toast-danger  { background: rgba(239,68,68,.1); }
+
+/* ══════════════════════════════════════════════════════════════
+   El botón de colapsar está dentro del sideba
+══════════════════════════════════════════════════════════════ */
+
+#sidebar.collapsed .sb-collapse-btn {
+  opacity: 1 !important;
+  pointer-events: all !important;
+  width: auto !important;
+  overflow: visible !important;
+}
