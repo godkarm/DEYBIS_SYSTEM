@@ -40,4 +40,30 @@ class ClienteModel {
         $stmt->execute([$idCliente]);
         return (float) $stmt->fetchColumn();
     }
+    public function actualizar(int $id, string $nombre, string $estado): void {
+    $this->db->prepare(
+        "UPDATE clientes SET nombre = ?, estado = ? WHERE id = ?"
+    )->execute([trim($nombre), $estado, $id]);
+}
+
+public function delete(int $id): bool {
+    // Verificar que no tenga stock ni movimientos
+    $stmt = $this->db->prepare("
+        SELECT COUNT(*) FROM producto_cliente pc
+        JOIN movimientos m ON m.id_pc = pc.id
+        WHERE pc.id_cliente = ?
+    ");
+    $stmt->execute([$id]);
+    if ((int)$stmt->fetchColumn() > 0) return false;
+
+    $stmt = $this->db->prepare("
+        SELECT COALESCE(SUM(stock_actual), 0) FROM producto_cliente WHERE id_cliente = ?
+    ");
+    $stmt->execute([$id]);
+    if ((float)$stmt->fetchColumn() > 0) return false;
+
+    $this->db->prepare("DELETE FROM producto_cliente WHERE id_cliente = ?")->execute([$id]);
+    $this->db->prepare("DELETE FROM clientes WHERE id = ?")->execute([$id]);
+    return true;
+}
 }

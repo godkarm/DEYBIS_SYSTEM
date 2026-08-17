@@ -328,61 +328,128 @@ registerTab('clientes', async area => {
     `<button class="btn btn-primary" id="btnNuevoCliente"><i class="bi bi-plus-lg"></i>Nuevo Cliente</button>`);
 
   area.innerHTML = `
-    <div class="ds-grid-2" style="gap:14px">
-      <div id="formNuevoCliente" class="ds-card" style="display:none">
-        <div class="ds-card-title"><i class="bi bi-person-plus"></i>Registrar Cliente</div>
-        <div class="ds-field">
-          <label class="ds-label">Código <span class="req">*</span></label>
-          <div class="ds-input-group"><i class="bi bi-hash ds-input-icon"></i>
-            <input type="text" id="cliCodigo" class="ds-input" placeholder="CLI001" style="text-transform:uppercase">
-          </div>
-        </div>
-        <div class="ds-field">
-          <label class="ds-label">Nombre <span class="req">*</span></label>
-          <div class="ds-input-group"><i class="bi bi-building ds-input-icon"></i>
-            <input type="text" id="cliNombre" class="ds-input" placeholder="Nombre del cliente">
-          </div>
-        </div>
-        <div class="btn-group">
-          <button id="btnRegistrarCliente" class="btn btn-primary"><i class="bi bi-check-lg"></i>Registrar</button>
-          <button id="btnCancelarCliente" class="btn btn-secondary"><i class="bi bi-x"></i>Cancelar</button>
-        </div>
-      </div>
-      <div class="ds-card ds-card-flush" style="grid-column: 1 / -1">
-        <div style="padding:14px 18px 10px" class="ds-card-title"><i class="bi bi-building"></i>Clientes Registrados</div>
-        <div id="tablaClientes" style="padding:0 0 4px">${skelRows()}</div>
-      </div>
+    <div class="ds-card ds-card-flush">
+      <div style="padding:14px 18px 10px" class="ds-card-title"><i class="bi bi-building"></i>Clientes Registrados</div>
+      <div id="tablaClientes" style="padding:0 0 4px">${skelRows()}</div>
     </div>`;
 
-  // Botón nuevo
-  $('pageActions').querySelector('#btnNuevoCliente')?.addEventListener('click', () => {
-    $('formNuevoCliente').style.display = 'block';
-    $('formNuevoCliente').scrollIntoView({ behavior:'smooth' });
-    $('cliCodigo').focus();
-  });
+  // ── Modal Nuevo / Editar ──────────────────────────────────
+  function abrirModalCliente(cliente = null) {
+    const esEdicion = cliente !== null;
+    openModal(
+      esEdicion
+        ? `<i class="bi bi-pencil"></i> Editar Cliente: ${cliente.codigo}`
+        : `<i class="bi bi-building-add"></i> Nuevo Cliente`,
+      `<div class="ds-field">
+        <label class="ds-label">Código <span class="req">*</span></label>
+        <div class="ds-input-group">
+          <i class="bi bi-hash ds-input-icon"></i>
+          <input type="text" id="modalCliCodigo" class="ds-input"
+            placeholder="CLI001"
+            style="text-transform:uppercase"
+            value="${esEdicion ? cliente.codigo : ''}"
+            ${esEdicion ? 'readonly style="opacity:.6;cursor:not-allowed;text-transform:uppercase"' : ''}>
+        </div>
+      </div>
+      <div class="ds-field">
+        <label class="ds-label">Nombre <span class="req">*</span></label>
+        <div class="ds-input-group">
+          <i class="bi bi-building ds-input-icon"></i>
+          <input type="text" id="modalCliNombre" class="ds-input"
+            placeholder="Nombre del cliente"
+            value="${esEdicion ? cliente.nombre : ''}">
+        </div>
+      </div>
+      ${esEdicion ? `
+      <div class="ds-field">
+        <label class="ds-label">Estado</label>
+        <select id="modalCliEstado" class="ds-select">
+          <option value="ACTIVO"   ${cliente.estado==='ACTIVO'?'selected':''}>Activo</option>
+          <option value="INACTIVO" ${cliente.estado==='INACTIVO'?'selected':''}>Inactivo</option>
+        </select>
+      </div>` : ''}`,
+      `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+       <button class="btn btn-primary" id="btnGuardarCliente">
+         <i class="bi bi-check-lg"></i>${esEdicion ? 'Guardar cambios' : 'Registrar'}
+       </button>`
+    );
 
-  $('btnCancelarCliente')?.addEventListener('click', () => {
-    $('formNuevoCliente').style.display = 'none';
-  });
+    document.getElementById('btnGuardarCliente').addEventListener('click', async () => {
+      const codigo = document.getElementById('modalCliCodigo').value.trim().toUpperCase();
+      const nombre = document.getElementById('modalCliNombre').value.trim();
 
+      if (!codigo || !nombre) {
+        toast('Código y nombre son obligatorios.', 'warning'); return;
+      }
+
+      let r;
+      if (esEdicion) {
+        // Actualizar nombre y estado
+        const estado = document.getElementById('modalCliEstado').value;
+        r = await api('POST', '/api/clientes/actualizar', { codigo, nombre, estado });
+      } else {
+        r = await api('POST', '/api/clientes', { codigo, nombre });
+      }
+
+      toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger');
+      if (r?.ok) {
+        closeModal();
+        cargarClientes();
+        // Refrescar selector sidebar
+        if (selCli) {
+          selCli.innerHTML = '<option value="">Todos los clientes</option>';
+          const rc = await api('GET', '/api/clientes', { activos:'1' });
+          rc?.data?.forEach(c => {
+            selCli.insertAdjacentHTML('beforeend',
+              `<option value="${c.codigo}">${c.nombre}</option>`);
+          });
+        }
+      }
+    });
+  }
+
+  // ── Cargar tabla ──────────────────────────────────────────
   async function cargarClientes() {
     const r = await api('GET', '/api/clientes');
     if (!r?.ok) return;
     $('tablaClientes').innerHTML = r.data.length
       ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
           <table class="ds-table">
-            <thead><tr><th>Código</th><th>Nombre</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nombre</th>
+                <th>Estado</th>
+                <th>Creado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
             <tbody>${r.data.map(c => `
               <tr>
                 <td><span class="chip">${c.codigo}</span></td>
                 <td class="td-primary">${c.nombre}</td>
                 <td><span class="badge ${c.estado==='ACTIVO'?'badge-active':'badge-inactive'}">${c.estado}</span></td>
+                <td style="color:var(--text-muted);font-size:11px">${fmtDate(c.created_at)}</td>
                 <td>
-                  <button class="btn btn-xs ${c.estado==='ACTIVO'?'btn-danger':'btn-success'} btn-cambio-estado"
-                    data-codigo="${c.codigo}" data-estado="${c.estado==='ACTIVO'?'INACTIVO':'ACTIVO'}">
-                    <i class="bi ${c.estado==='ACTIVO'?'bi-pause-circle':'bi-play-circle'}"></i>
-                    ${c.estado==='ACTIVO'?'Inactivar':'Activar'}
-                  </button>
+                  <div class="btn-group">
+                    <button class="btn btn-xs btn-secondary btn-editar-cli"
+                      data-codigo="${c.codigo}"
+                      data-nombre="${c.nombre}"
+                      data-estado="${c.estado}">
+                      <i class="bi bi-pencil"></i>Editar
+                    </button>
+                    <button class="btn btn-xs ${c.estado==='ACTIVO'?'btn-danger':'btn-success'} btn-cambio-estado"
+                      data-codigo="${c.codigo}"
+                      data-estado="${c.estado==='ACTIVO'?'INACTIVO':'ACTIVO'}">
+                      <i class="bi ${c.estado==='ACTIVO'?'bi-pause-circle':'bi-play-circle'}"></i>
+                      ${c.estado==='ACTIVO'?'Inactivar':'Activar'}
+                    </button>
+                    <button class="btn btn-xs btn-danger btn-eliminar-cli"
+                      data-codigo="${c.codigo}"
+                      data-nombre="${c.nombre}">
+                      <i class="bi bi-trash"></i>Eliminar
+                    </button>
+                  </div>
                 </td>
               </tr>`).join('')}
             </tbody>
@@ -390,35 +457,45 @@ registerTab('clientes', async area => {
         </div>`
       : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin clientes registrados.</div>`;
 
+    // Editar
+    $$('.btn-editar-cli').forEach(btn => {
+      btn.addEventListener('click', () => {
+        abrirModalCliente({
+          codigo : btn.dataset.codigo,
+          nombre : btn.dataset.nombre,
+          estado : btn.dataset.estado,
+        });
+      });
+    });
+
+    // Cambiar estado
     $$('.btn-cambio-estado').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const r2 = await api('POST', '/api/clientes/estado', { codigo: btn.dataset.codigo, estado: btn.dataset.estado });
+        const r2 = await api('POST', '/api/clientes/estado', {
+          codigo: btn.dataset.codigo,
+          estado: btn.dataset.estado,
+        });
+        toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+        if (r2?.ok) cargarClientes();
+      });
+    });
+
+    // Eliminar
+    $$('.btn-eliminar-cli').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`¿Eliminar el cliente "${btn.dataset.nombre}"?\nSolo es posible si no tiene stock ni movimientos.`)) return;
+        const r2 = await api('POST', '/api/clientes/eliminar', { codigo: btn.dataset.codigo });
         toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
         if (r2?.ok) cargarClientes();
       });
     });
   }
 
-  cargarClientes();
+  // ── Botón nuevo ───────────────────────────────────────────
+  $('pageActions').querySelector('#btnNuevoCliente')
+    ?.addEventListener('click', () => abrirModalCliente());
 
-  $('btnRegistrarCliente')?.addEventListener('click', async () => {
-    const r = await api('POST', '/api/clientes', {
-      codigo: $('cliCodigo').value.trim().toUpperCase(),
-      nombre: $('cliNombre').value.trim()
-    });
-    toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger');
-    if (r?.ok) {
-      $('cliCodigo').value = ''; $('cliNombre').value = '';
-      $('formNuevoCliente').style.display = 'none';
-      cargarClientes();
-      // Refrescar selector de cliente en sidebar
-      if (selCli) {
-        selCli.innerHTML = '<option value="">Todos los clientes</option>';
-        const rc = await api('GET', '/api/clientes', { activos:'1' });
-        rc?.data?.forEach(c => { selCli.insertAdjacentHTML('beforeend', `<option value="${c.codigo}">${c.nombre}</option>`); });
-      }
-    }
-  });
+  cargarClientes();
 });
 
 /* ══════════════════════════════════════════════════════════════
