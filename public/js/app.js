@@ -1357,6 +1357,7 @@ registerTab('configuracion', area => {
       toast('Error de conexión al importar.', 'danger');
     }
   });
+  });
 
 /* ══════════════════════════════════════════════════════════════
    USUARIOS
