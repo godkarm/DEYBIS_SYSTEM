@@ -525,42 +525,155 @@ registerTab('productos', async area => {
   async function renderCatalogo() {
     $('prodPanel').innerHTML = `
       <div class="ds-card ds-card-flush">
-        <div style="padding:14px 18px 10px;display:flex;align-items:center;justify-content:space-between">
+        <div style="padding:14px 18px 10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div class="ds-card-title" style="margin:0"><i class="bi bi-box-seam"></i>Catálogo Global</div>
-          <div class="ds-input-group" style="max-width:220px">
-            <i class="bi bi-search ds-input-icon"></i>
-            <input type="text" id="filtroCat" class="ds-input" placeholder="Filtrar...">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div class="ds-input-group" style="max-width:220px">
+              <i class="bi bi-search ds-input-icon"></i>
+              <input type="text" id="filtroCat" class="ds-input" placeholder="Filtrar...">
+            </div>
+            <select id="filtroGrupoCat" class="ds-select" style="max-width:160px">
+              <option value="">Todos los grupos</option>
+            </select>
           </div>
         </div>
         <div id="tablaCatalogo">${skelRows()}</div>
       </div>`;
 
-    const r = await api('GET', '/api/productos/catalogo');
+    const [r, listas] = await Promise.all([
+      api('GET', '/api/productos/catalogo'),
+      api('GET', '/api/productos/listas'),
+    ]);
     let data = r?.data || [];
+
+    // Llenar filtro de grupos
+    const grupos = listas?.data?.grupos || [];
+    grupos.forEach(g => {
+      $('filtroGrupoCat').insertAdjacentHTML('beforeend',
+        `<option value="${g}">${g}</option>`);
+    });
 
     function render(d) {
       $('tablaCatalogo').innerHTML = d.length
         ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
             <table class="ds-table">
-              <thead><tr><th>Código</th><th>Nombre</th><th>Unidad</th><th>Grupo</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  <th>Unidad</th>
+                  <th>Grupo</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
               <tbody>${d.map(p => `
                 <tr>
                   <td><span class="chip">${p.codigo}</span></td>
                   <td class="td-primary">${p.nombre}</td>
                   <td style="color:var(--text-muted)">${p.unidad}</td>
                   <td><span class="badge badge-info">${p.grupo}</span></td>
+                  <td>
+                    <div class="btn-group">
+                      <button class="btn btn-xs btn-secondary btn-editar-prod"
+                        data-id="${p.id}"
+                        data-codigo="${p.codigo}"
+                        data-nombre="${p.nombre}"
+                        data-unidad="${p.unidad}"
+                        data-grupo="${p.grupo}">
+                        <i class="bi bi-pencil"></i>Editar
+                      </button>
+                      <button class="btn btn-xs btn-danger btn-eliminar-prod"
+                        data-codigo="${p.codigo}"
+                        data-nombre="${p.nombre}">
+                        <i class="bi bi-trash"></i>Eliminar
+                      </button>
+                    </div>
+                  </td>
                 </tr>`).join('')}
               </tbody>
             </table>
           </div>`
         : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin productos.</div>`;
+
+      // Editar
+      $$('.btn-editar-prod').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const unidades = listas?.data?.unidades || [];
+          openModal(
+            `<i class="bi bi-pencil"></i> Editar Producto: ${btn.dataset.codigo}`,
+            `<div class="ds-field">
+              <label class="ds-label">Código</label>
+              <input type="text" class="ds-input" value="${btn.dataset.codigo}"
+                readonly style="opacity:.6;cursor:not-allowed">
+            </div>
+            <div class="ds-field">
+              <label class="ds-label">Nombre <span class="req">*</span></label>
+              <input type="text" id="editProdNombre" class="ds-input"
+                value="${btn.dataset.nombre}">
+            </div>
+            <div class="ds-field">
+              <label class="ds-label">Unidad de Medida</label>
+              <select id="editProdUnidad" class="ds-select">
+                ${unidades.map(u =>
+                  `<option value="${u}" ${u===btn.dataset.unidad?'selected':''}>${u}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div class="ds-field">
+              <label class="ds-label">Grupo</label>
+              <input type="text" class="ds-input" value="${btn.dataset.grupo}"
+                readonly style="opacity:.6;cursor:not-allowed">
+              <small style="color:var(--text-muted);font-size:10px">
+                El grupo no se puede cambiar porque determina el código
+              </small>
+            </div>`,
+            `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+             <button class="btn btn-primary" id="btnGuardarProd">
+               <i class="bi bi-check-lg"></i>Guardar cambios
+             </button>`
+          );
+
+          document.getElementById('btnGuardarProd').addEventListener('click', async () => {
+            const nombre = document.getElementById('editProdNombre').value.trim();
+            const unidad = document.getElementById('editProdUnidad').value;
+            if (!nombre) { toast('El nombre es obligatorio.', 'warning'); return; }
+            const r2 = await api('POST', '/api/productos/actualizar', {
+              codigo: btn.dataset.codigo,
+              nombre,
+              unidad,
+            });
+            toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+            if (r2?.ok) { closeModal(); renderCatalogo(); }
+          });
+        });
+      });
+
+      // Eliminar
+      $$('.btn-eliminar-prod').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm(`¿Eliminar "${btn.dataset.nombre}"?\nSolo es posible si no tiene stock ni movimientos.`)) return;
+          const r2 = await api('POST', '/api/productos/eliminar', { codigo: btn.dataset.codigo });
+          toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+          if (r2?.ok) renderCatalogo();
+        });
+      });
+    }
+
+    function applyFilters() {
+      const txt   = ($('filtroCat')?.value || '').toLowerCase();
+      const grupo = $('filtroGrupoCat')?.value || '';
+      let d = data;
+      if (txt)   d = d.filter(p =>
+        p.nombre.toLowerCase().includes(txt) ||
+        p.codigo.toLowerCase().includes(txt) ||
+        p.grupo.toLowerCase().includes(txt));
+      if (grupo) d = d.filter(p => p.grupo === grupo);
+      render(d);
     }
 
     render(data);
-    $('filtroCat').addEventListener('input', function () {
-      const t = this.value.toLowerCase();
-      render(t ? data.filter(p => p.nombre.toLowerCase().includes(t) || p.codigo.toLowerCase().includes(t) || p.grupo.toLowerCase().includes(t)) : data);
-    });
+    $('filtroCat').addEventListener('input', applyFilters);
+    $('filtroGrupoCat').addEventListener('change', applyFilters);
   }
 
   async function renderNuevo() {
@@ -1053,7 +1166,7 @@ registerTab('configuracion', area => {
   setPageHeader('Configuración', 'Herramientas de administración del sistema');
 
   area.innerHTML = `
-    <div class="ds-grid-2" style="gap:14px;max-width:720px">
+    <div class="ds-grid-2" style="gap:14px;max-width:960px">
       <div class="ds-card">
         <div class="ds-card-title"><i class="bi bi-shield-check"></i>Validar Integridad</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">
@@ -1064,6 +1177,7 @@ registerTab('configuracion', area => {
         </button>
         <div id="resValidar" style="margin-top:12px"></div>
       </div>
+
       <div class="ds-card">
         <div class="ds-card-title"><i class="bi bi-arrow-repeat"></i>Recalcular Stock</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">
@@ -1073,8 +1187,60 @@ registerTab('configuracion', area => {
           <i class="bi bi-arrow-clockwise"></i>Recalcular Ahora
         </button>
       </div>
+
+      <div class="ds-card" style="grid-column:1/-1">
+        <div class="ds-card-title"><i class="bi bi-file-earmark-arrow-up"></i>Importación Masiva de Catálogo</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;line-height:1.6">
+          Sube un archivo CSV para registrar múltiples productos de una sola vez.
+          Descarga el archivo maestro para ver el formato correcto antes de subir.
+        </p>
+
+        <div class="ds-grid-2" style="gap:14px;margin-bottom:16px">
+          <div class="ds-card" style="background:var(--bg-elevated);border:1px dashed var(--border-medium)">
+            <div class="ds-card-title" style="font-size:12px">
+              <i class="bi bi-download" style="color:var(--cyan)"></i>Paso 1 — Descargar Maestro
+            </div>
+            <p style="font-size:11.5px;color:var(--text-muted);margin-bottom:12px;line-height:1.6">
+              Descarga el archivo CSV maestro con instrucciones, grupos y unidades válidas, y filas de ejemplo.
+            </p>
+            <a href="${API}/api/configuracion/maestro" class="btn btn-secondary" style="width:100%" target="_blank">
+              <i class="bi bi-file-earmark-spreadsheet"></i>Descargar Maestro CSV
+            </a>
+          </div>
+
+          <div class="ds-card" style="background:var(--bg-elevated);border:1px dashed var(--border-medium)">
+            <div class="ds-card-title" style="font-size:12px">
+              <i class="bi bi-upload" style="color:var(--accent)"></i>Paso 2 — Subir CSV completado
+            </div>
+            <p style="font-size:11.5px;color:var(--text-muted);margin-bottom:12px;line-height:1.6">
+              Una vez completado el maestro, súbelo aquí. Los códigos se generarán automáticamente.
+            </p>
+            <div id="dropZone" style="
+              border:2px dashed var(--border-medium);
+              border-radius:var(--radius-md);
+              padding:20px;
+              text-align:center;
+              cursor:pointer;
+              transition:all var(--trans-std);
+              margin-bottom:10px">
+              <i class="bi bi-cloud-upload" style="font-size:28px;color:var(--text-muted);display:block;margin-bottom:6px"></i>
+              <span style="font-size:12px;color:var(--text-muted)">Arrastra tu CSV aquí o haz clic para seleccionar</span>
+              <input type="file" id="csvFile" accept=".csv" style="display:none">
+            </div>
+            <div id="csvFileInfo" style="display:none;margin-bottom:10px;font-size:12px;color:var(--text-accent)">
+              <i class="bi bi-file-earmark-check"></i> <span id="csvFileName"></span>
+            </div>
+            <button id="btnImportar" class="btn btn-primary" style="width:100%" disabled>
+              <i class="bi bi-upload"></i>Importar CSV
+            </button>
+          </div>
+        </div>
+
+        <div id="resImportar" style="display:none"></div>
+      </div>
     </div>`;
 
+  // ── Validar ────────────────────────────────────────────────
   $('btnValidar').addEventListener('click', async () => {
     $('btnValidar').disabled = true;
     $('btnValidar').innerHTML = '<i class="bi bi-hourglass-split"></i>Validando...';
@@ -1086,16 +1252,16 @@ registerTab('configuracion', area => {
     $('resValidar').innerHTML = errs.length
       ? `<div class="ds-alert ds-alert-warning">
           <i class="bi bi-exclamation-triangle-fill"></i>
-          <div>
-            <strong>${errs.length} problema(s) encontrado(s):</strong>
+          <div><strong>${errs.length} problema(s):</strong>
             <ul style="margin:6px 0 0 14px;font-size:11.5px">
               ${errs.map(e => `<li>${e}</li>`).join('')}
             </ul>
           </div>
         </div>`
-      : `<div class="ds-alert ds-alert-success"><i class="bi bi-check-circle-fill"></i>Sistema íntegro — sin errores.</div>`;
+      : `<div class="ds-alert ds-alert-success"><i class="bi bi-check-circle-fill"></i>Sistema íntegro.</div>`;
   });
 
+  // ── Recalcular ─────────────────────────────────────────────
   $('btnRecalcular').addEventListener('click', async () => {
     if (!confirm('¿Recalcular stock desde el historial completo?')) return;
     $('btnRecalcular').disabled = true;
@@ -1105,7 +1271,92 @@ registerTab('configuracion', area => {
     $('btnRecalcular').innerHTML = '<i class="bi bi-arrow-clockwise"></i>Recalcular Ahora';
     toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger');
   });
-});
+
+  // ── Drop zone ──────────────────────────────────────────────
+  const dropZone = $('dropZone');
+  const csvFile  = $('csvFile');
+
+  dropZone.addEventListener('click', () => csvFile.click());
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.style.borderColor    = 'var(--accent)';
+    dropZone.style.background     = 'var(--accent-subtle)';
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.style.borderColor = 'var(--border-medium)';
+    dropZone.style.background  = '';
+  });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--border-medium)';
+    dropZone.style.background  = '';
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+  });
+  csvFile.addEventListener('change', () => {
+    if (csvFile.files[0]) setFile(csvFile.files[0]);
+  });
+
+  function setFile(file) {
+    if (!file.name.endsWith('.csv')) {
+      toast('Solo se permiten archivos .csv', 'warning'); return;
+    }
+    $('csvFileName').textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+    $('csvFileInfo').style.display = 'block';
+    dropZone.style.borderColor     = 'var(--accent)';
+    $('btnImportar').disabled      = false;
+  }
+
+  // ── Importar ───────────────────────────────────────────────
+  $('btnImportar').addEventListener('click', async () => {
+    const file = csvFile.files[0];
+    if (!file) { toast('Selecciona un archivo CSV.', 'warning'); return; }
+
+    $('btnImportar').disabled = true;
+    $('btnImportar').innerHTML = '<i class="bi bi-hourglass-split"></i>Importando...';
+    $('resImportar').style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('archivo', file);
+
+    try {
+      const res  = await fetch(API + '/api/configuracion/importar', {
+        method: 'POST',
+        body  : formData,
+      });
+      const data = await res.json();
+
+      $('btnImportar').disabled = false;
+      $('btnImportar').innerHTML = '<i class="bi bi-upload"></i>Importar CSV';
+
+      const errores = data.data?.errores || [];
+      $('resImportar').style.display = 'block';
+      $('resImportar').innerHTML = `
+        <div class="ds-alert ${data.ok ? 'ds-alert-success' : 'ds-alert-danger'}">
+          <i class="bi ${data.ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
+          <div>
+            <strong>${data.mensaje}</strong>
+            ${errores.length ? `
+            <ul style="margin:8px 0 0 14px;font-size:11.5px">
+              ${errores.map(e => `<li>${e}</li>`).join('')}
+            </ul>` : ''}
+          </div>
+        </div>`;
+
+      if (data.ok) {
+        toast(`${data.data.importados} producto(s) importado(s).`, 'success', 5000);
+        // Resetear
+        csvFile.value = '';
+        $('csvFileInfo').style.display = 'none';
+        $('btnImportar').disabled      = true;
+        dropZone.style.borderColor     = 'var(--border-medium)';
+      }
+    } catch {
+      $('btnImportar').disabled = false;
+      $('btnImportar').innerHTML = '<i class="bi bi-upload"></i>Importar CSV';
+      toast('Error de conexión al importar.', 'danger');
+    }
+  });
 
 /* ══════════════════════════════════════════════════════════════
    USUARIOS

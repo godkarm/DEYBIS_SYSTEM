@@ -119,4 +119,36 @@ class ProductoModel {
         $stmt->execute([$idCliente, $idProducto]);
         return $stmt->fetch() ?: null;
     }
+    public function actualizar(int $id, string $nombre, string $unidad): void {
+    $db = $this->db;
+    $idUnidad = (int)$db->query(
+        "SELECT id FROM unidades WHERE nombre = " . $db->quote($unidad)
+    )->fetchColumn();
+
+    $db->prepare("UPDATE productos SET nombre = ?, id_unidad = ? WHERE id = ?")
+       ->execute([trim($nombre), $idUnidad, $id]);
+}
+
+public function delete(int $id): bool {
+    // Verificar movimientos
+    $stmt = $this->db->prepare("
+        SELECT COUNT(*) FROM movimientos m
+        JOIN producto_cliente pc ON pc.id = m.id_pc
+        WHERE pc.id_producto = ?
+    ");
+    $stmt->execute([$id]);
+    if ((int)$stmt->fetchColumn() > 0) return false;
+
+    // Verificar stock
+    $stmt = $this->db->prepare("
+        SELECT COALESCE(SUM(stock_actual), 0)
+        FROM producto_cliente WHERE id_producto = ?
+    ");
+    $stmt->execute([$id]);
+    if ((float)$stmt->fetchColumn() > 0) return false;
+
+    $this->db->prepare("DELETE FROM producto_cliente WHERE id_producto = ?")->execute([$id]);
+    $this->db->prepare("DELETE FROM productos WHERE id = ?")->execute([$id]);
+    return true;
+}
 }

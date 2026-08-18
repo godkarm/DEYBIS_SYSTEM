@@ -125,4 +125,42 @@ class ProductoController {
 
         Response::ok($this->model->buscarPorNombre($texto, $idCliente));
     }
+    public function actualizar(): void {
+    Auth::requireSeccion('productos');
+    $body   = json_decode(file_get_contents('php://input'), true) ?? [];
+    $codigo = strtoupper(trim($body['codigo'] ?? ''));
+    $nombre = trim($body['nombre'] ?? '');
+    $unidad = trim($body['unidad'] ?? '');
+
+    if (!$codigo || !$nombre) {
+        Response::error('Código y nombre son obligatorios.');
+    }
+
+    $prod = $this->model->findByCodigo($codigo);
+    if (!$prod) Response::error('Producto no encontrado.', 404);
+
+    $listas = $this->model->listas();
+    if ($unidad && !in_array($unidad, $listas['unidades'], true)) {
+        Response::error("Unidad inválida: {$unidad}");
+    }
+
+    $this->model->actualizar($prod['id'], $nombre, $unidad);
+    Response::ok(null, 'Producto actualizado correctamente.');
+}
+
+public function destroy(): void {
+    Auth::requireSeccion('productos');
+    Auth::requireRol(['ADMINISTRADOR']);
+    $body   = json_decode(file_get_contents('php://input'), true) ?? [];
+    $codigo = strtoupper(trim($body['codigo'] ?? ''));
+
+    $prod = $this->model->findByCodigo($codigo);
+    if (!$prod) Response::error('Producto no encontrado.', 404);
+
+    $eliminado = $this->model->delete($prod['id']);
+    if (!$eliminado) {
+        Response::error('No se puede eliminar: el producto tiene stock o movimientos registrados.');
+    }
+    Response::ok(null, 'Producto eliminado correctamente.');
+}
 }

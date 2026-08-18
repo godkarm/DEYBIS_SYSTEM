@@ -61,4 +61,162 @@ class ConfiguracionController {
         // Ejecutar el schema si las tablas no existen (idempotente con IF NOT EXISTS)
         Response::ok(null, 'El sistema ya está inicializado. Use el script SQL para reinstalar.');
     }
+    public function descargarMaestro(): void {
+    Auth::requireSeccion('configuracion');
+
+    $grupos = array_keys(PREFIJOS_POR_GRUPO);
+    $db     = Database::getInstance()->getConnection();
+    $unidades = $db->query("SELECT nombre FROM unidades ORDER BY nombre")
+                   ->fetchAll(PDO::FETCH_COLUMN);
+
+    $nombre = 'Maestro_Catalogo_' . date('Y-m-d') . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header("Content-Disposition: attachment; filename=\"{$nombre}\"");
+
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM UTF-8
+
+    // Instrucciones
+    fputcsv($out, ['# ARCHIVO MAESTRO — DEYBIS SYSTEM']);
+    fputcsv($out, ['# Columnas obligatorias: nombre, grupo, unidad']);
+    fputcsv($out, ['# Columna opcional: stock_min (default 0), clientes (codigos separados por |)']);
+    fputcsv($out, ['# Grupos válidos: ' . implode(', ', $grupos)]);
+    fputcsv($out, ['# Unidades válidas: ' . implode(', ', $unidades)]);
+    fputcsv($out, ['# Las filas que empiezan con # son ignoradas']);
+    fputcsv($out, []);
+
+    // Cabecera
+    fputcsv($out, ['nombre', 'grupo', 'unidad', 'stock_min', 'clientes']);
+
+    // Ejemplos
+    fputcsv($out, ['Guante de seguridad talla M', 'EPP',        'Par',      '10', 'CLI001|CLI002']);
+    fputcsv($out, ['Aceite lubricante 1L',         'Ferretería', 'Litro',    '5',  '']);
+    fputcsv($out, ['Papel bond A4',                'Útiles de oficina', 'Caja', '2', '']);
+
+    fclose($out);
+    exit;
+}
+
+public function importarCatalogo(): void {
+    Auth::requireSeccion('configuracion');
+    Auth::requireRol(['ADMINISTRADOR']);
+
+    if (empty($_FILES['archivo']) || $_FILES['archivo']['error'] !== UPLOAD_ERR_OK) {
+        Response::error('No se recibió ningún archivo válido.');
+    }
+
+    $ext = strtolower(pathinfo($_FILES['archivo']['name'], PATHINFO_EXTENSION));
+    if ($ext !== 'csv') {
+        Response::error('Solo se permiten archivos .csv');
+    }
+
+    $handle = fopen($_FILES['archivo']['tmp_name'], 'r');
+    if (!$handle) Response::error('No se pudo leer el archivo.');
+
+    // Detectar y eliminar BOM UTF-8
+    $bom = fread($handle, 3);
+    if ($bom !== "\xEF\xBB\xBF") rewind($handle);
+
+    $db           = Database::getInstance()->getConnection();
+    $productoModel = new ProductoModel();
+    $clienteModel  = new ClienteModel();
+
+    $grupos   = PREFIJOS_POR_GRUPO;                          // ['EPP'=>'EPP',...]
+    $listas   = $productoModel->listas();
+    $unidades = $listas['unidades'];
+
+    $cabecera    = null;
+    $importados  = 0;
+    $omitidos    = 0;
+    $errores     = [];
+    $fila        = 0;
+
+    $db->beginTransaction();
+    try {
+        while (($row = fgetcsv($handle)) !== false) {
+            $fila++;
+
+            // Ignorar comentarios y filas vacías
+            if (empty($row) || empty($row[0]) || str_starts_with(trim($row[0]), '#')) continue;
+
+            // Primera fila válida = cabecera
+            if ($cabecera === null) {
+                $cabecera = array_map('trim', $row);
+                continue;
+            }
+
+            // Mapear columnas
+            $data = [];
+            foreach ($cabecera as $i => $col) {
+                $data[$col] = trim($row[$i] ?? '');
+            }
+
+            $nombre   = $data['nombre']    ?? '';
+            $grupo    = $data['grupo']     ?? '';
+            $unidad   = $data['unidad']    ?? 'Unidades';
+            $stockMin = (float)($data['stock_min'] ?? 0);
+            $cliRaw   = $data['clientes']  ?? '';
+
+            // Validaciones
+            if (!$nombre) {
+                $errores[] = "Fila {$fila}: nombre vacío — omitida.";
+                $omitidos++; continue;
+            }
+            if (!isset($grupos[$grupo])) {
+                $errores[] = "Fila {$fila}: grupo '{$grupo}' inválido — omitida.";
+                $omitidos++; continue;
+            }
+            if (!in_array($unidad, $unidades, true)) {
+                $unidad = 'Unidades'; // fallback
+            }
+
+            // IDs de grupo y unidad
+            $idGrupo  = (int)$db->query(
+                "SELECT id FROM grupos WHERE nombre = " . $db->quote($grupo)
+            )->fetchColumn();
+            $idUnidad = (int)$db->query(
+                "SELECT id FROM unidades WHERE nombre = " . $db->quote($unidad)
+            )->fetchColumn();
+
+            if (!$idGrupo || !$idUnidad) {
+                $errores[] = "Fila {$fila}: no se encontró grupo o unidad en BD — omitida.";
+                $omitidos++; continue;
+            }
+
+            // Generar código correlativo
+            $prefijo = $grupos[$grupo];
+            $codigo  = $productoModel->generarCodigo($prefijo);
+
+            // Insertar producto
+            $idProd = $productoModel->create($codigo, $nombre, $idUnidad, $idGrupo);
+
+            // Habilitar para clientes indicados
+            if ($cliRaw) {
+                $codigos = array_filter(array_map('trim', explode('|', $cliRaw)));
+                foreach ($codigos as $codCli) {
+                    $cli = $clienteModel->findByCodigo($codCli);
+                    if ($cli && $cli['estado'] === 'ACTIVO') {
+                        $productoModel->habilitar($cli['id'], $idProd, $stockMin);
+                    }
+                }
+            }
+
+            $importados++;
+        }
+
+        fclose($handle);
+        $db->commit();
+
+        Response::ok([
+            'importados' => $importados,
+            'omitidos'   => $omitidos,
+            'errores'    => $errores,
+        ], "Importación completada: {$importados} producto(s) importado(s), {$omitidos} omitido(s).");
+
+    } catch (Throwable $e) {
+        $db->rollBack();
+        fclose($handle);
+        Response::error('Error durante la importación: ' . $e->getMessage(), 500);
+    }
+}
 }

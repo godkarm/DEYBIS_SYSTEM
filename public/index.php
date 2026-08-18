@@ -121,7 +121,11 @@ $routes = [
     'GET /app'                             => ['AppController',          'index'],
     'POST /api/usuarios/eliminar' => ['UsuarioController', 'destroy'],
     'POST /api/clientes/actualizar' => ['ClienteController', 'actualizar'],
-    'POST /api/clientes/eliminar'   => ['ClienteController', 'destroy'],   
+    'POST /api/clientes/eliminar'   => ['ClienteController', 'destroy'],
+    'POST /api/productos/actualizar' => ['ProductoController', 'actualizar'],
+    'POST /api/productos/eliminar'   => ['ProductoController', 'destroy'],
+    'GET /api/configuracion/maestro'   => ['ConfiguracionController', 'descargarMaestro'],
+    'POST /api/configuracion/importar' => ['ConfiguracionController', 'importarCatalogo'],
 ];
 
 if (isset($routes[$key])) {
