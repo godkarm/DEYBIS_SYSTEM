@@ -76,22 +76,26 @@ class ConfiguracionController {
     $out = fopen('php://output', 'w');
     fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM UTF-8
 
-    // Instrucciones
-    fputcsv($out, ['# ARCHIVO MAESTRO — DEYBIS SYSTEM']);
-    fputcsv($out, ['# Columnas obligatorias: nombre, grupo, unidad']);
-    fputcsv($out, ['# Columna opcional: stock_min (default 0), clientes (codigos separados por |)']);
-    fputcsv($out, ['# Grupos válidos: ' . implode(', ', $grupos)]);
-    fputcsv($out, ['# Unidades válidas: ' . implode(', ', $unidades)]);
-    fputcsv($out, ['# Las filas que empiezan con # son ignoradas']);
-    fputcsv($out, []);
+    // sep=, le indica a Excel que el separador es coma
+    fwrite($out, "sep=,\r\n");
 
-    // Cabecera
-    fputcsv($out, ['nombre', 'grupo', 'unidad', 'stock_min', 'clientes']);
+    // Comentarios como texto plano
+    fwrite($out, "# ARCHIVO MAESTRO - DEYBIS SYSTEM\r\n");
+    fwrite($out, "# Columnas obligatorias: nombre | grupo | unidad\r\n");
+    fwrite($out, "# Columna opcional: stock_min (default 0) | clientes (codigos separados por |)\r\n");
+    fwrite($out, "# Grupos validos: " . implode(" / ", $grupos) . "\r\n");
+    fwrite($out, "# Unidades validas: " . implode(" / ", $unidades) . "\r\n");
+    fwrite($out, "# Las filas que empiezan con # son ignoradas\r\n");
+    fwrite($out, "# NO borres ni modifiques la fila de cabecera de abajo\r\n");
+    fwrite($out, "\r\n");
 
-    // Ejemplos
-    fputcsv($out, ['Guante de seguridad talla M', 'EPP',        'Par',      '10', 'CLI001|CLI002']);
-    fputcsv($out, ['Aceite lubricante 1L',         'Ferretería', 'Litro',    '5',  '']);
-    fputcsv($out, ['Papel bond A4',                'Útiles de oficina', 'Caja', '2', '']);
+    // Cabecera de columnas
+    fwrite($out, "nombre,grupo,unidad,stock_min,clientes\r\n");
+
+    // Filas de ejemplo
+    fwrite($out, "Guante de seguridad talla M,EPP,Par,10,CLI001|CLI002\r\n");
+    fwrite($out, "Aceite lubricante 1L,Ferreteria,Litro,5,\r\n");
+    fwrite($out, "Papel bond A4,Utiles de oficina,Caja,2,\r\n");
 
     fclose($out);
     exit;
@@ -136,8 +140,10 @@ public function importarCatalogo(): void {
         while (($row = fgetcsv($handle)) !== false) {
             $fila++;
 
-            // Ignorar comentarios y filas vacías
-            if (empty($row) || empty($row[0]) || str_starts_with(trim($row[0]), '#')) continue;
+            // Ignorar sep=, comentarios y filas vacías
+            if (empty($row) || empty($row[0])) continue;
+            $first = trim($row[0]);
+            if (str_starts_with($first, '#') || str_starts_with($first, 'sep=')) continue;
 
             // Primera fila válida = cabecera
             if ($cabecera === null) {
@@ -217,6 +223,42 @@ public function importarCatalogo(): void {
         $db->rollBack();
         fclose($handle);
         Response::error('Error durante la importación: ' . $e->getMessage(), 500);
+    }
+}
+public function resetearSistema(): void {
+    Auth::requireSeccion('configuracion');
+    Auth::requireRol(['ADMINISTRADOR']);
+
+    $body      = json_decode(file_get_contents('php://input'), true) ?? [];
+    $confirmar = trim($body['confirmar'] ?? '');
+
+    if ($confirmar !== 'RESETEAR') {
+        Response::error('Debes confirmar escribiendo RESETEAR.');
+    }
+
+    $db = Database::getInstance()->getConnection();
+    $db->beginTransaction();
+    try {
+        // Orden correcto respetando FK
+        $db->exec("DELETE FROM sesiones");
+        $db->exec("DELETE FROM permisos_usuario");
+        $db->exec("DELETE FROM movimientos");
+        $db->exec("DELETE FROM producto_cliente");
+        $db->exec("DELETE FROM productos");
+        $db->exec("DELETE FROM correlativos");
+        $db->exec("DELETE FROM clientes");
+
+        // Reinsertar correlativos en 0
+        $db->exec("
+            INSERT INTO correlativos (prefijo, ultimo_num)
+            SELECT prefijo, 0 FROM grupos
+        ");
+
+        $db->commit();
+        Response::ok(null, 'Sistema reseteado correctamente. Catálogo, clientes, movimientos y correlativos reiniciados.');
+    } catch (Throwable $e) {
+        $db->rollBack();
+        Response::error('Error al resetear: ' . $e->getMessage(), 500);
     }
 }
 }

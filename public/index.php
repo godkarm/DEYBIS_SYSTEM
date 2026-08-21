@@ -126,6 +126,7 @@ $routes = [
     'POST /api/productos/eliminar'   => ['ProductoController', 'destroy'],
     'GET /api/configuracion/maestro'   => ['ConfiguracionController', 'descargarMaestro'],
     'POST /api/configuracion/importar' => ['ConfiguracionController', 'importarCatalogo'],
+    'POST /api/configuracion/resetear' => ['ConfiguracionController', 'resetearSistema'],
 ];
 
 if (isset($routes[$key])) {

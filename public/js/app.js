@@ -17,6 +17,14 @@ function fmtNum(n) {
 }
 function fmtDate(s) {
   if (!s) return '—';
+  // Fechas ISO "YYYY-MM-DD" se parsean como UTC; construir en hora local
+  // para evitar que el día retroceda en zonas UTC-X
+  const iso = String(s).slice(0, 10);
+  const parts = iso.split('-');
+  if (parts.length === 3) {
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    return isNaN(d) ? s : d.toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric' });
+  }
   const d = new Date(s);
   return isNaN(d) ? s : d.toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric' });
 }
@@ -53,7 +61,13 @@ async function api(method, path, body = null) {
   try {
     const res = await fetch(url, opts);
     if (res.status === 401) { window.location.href = API + '/'; return null; }
-    return await res.json();
+    const data = await res.json();
+    // Propagar respuestas de error del servidor igual que el código espera,
+    // pero si el JSON no tiene la forma esperada y el HTTP falló, normalizar.
+    if (!res.ok && data.ok === undefined) {
+      return { ok: false, mensaje: data.mensaje || `Error ${res.status}` };
+    }
+    return data;
   } catch {
     toast('Error de conexión.', 'danger');
     return null;
@@ -66,9 +80,82 @@ function clienteActual() {
   return s ? s.value : (USR.cliente_codigo || '');
 }
 
+async function refrescarSelectorClientes() {
+  const sel = $('selectCliente');
+  if (!sel) return;
+  const actual = sel.value;
+  const rc = await api('GET', '/api/clientes', { activos: '1' });
+  if (!rc?.ok) return;
+  sel.innerHTML = '<option value="">Todos los clientes</option>';
+  rc.data.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.codigo;
+    o.textContent = c.nombre;
+    sel.appendChild(o);
+  });
+  if ([...sel.options].some(o => o.value === actual)) {
+    sel.value = actual;
+  }
+}
+
 /* ── Skeletons ─────────────────────────────────────────────── */
 function skelRows(n = 4) {
   return Array(n).fill(`<div class="skel skel-row"></div>`).join('');
+}
+
+/* ── Paginación ────────────────────────────────────────────── */
+function paginar(data, paginaActual, porPagina = 25) {
+  const total   = data.length;
+  const paginas = Math.max(1, Math.ceil(total / porPagina));
+  const pag     = Math.min(Math.max(1, paginaActual), paginas);
+  const desde   = (pag - 1) * porPagina;
+  const slice   = data.slice(desde, desde + porPagina);
+  return { slice, pag, paginas, total, desde };
+}
+
+function renderPager(containerId, pag, paginas, total, desde, porPagina, onPageChange) {
+  const hasta  = Math.min(desde + porPagina, total);
+  const el     = document.getElementById(containerId);
+  if (!el) return;
+  if (paginas <= 1) { el.innerHTML = ''; return; }
+
+  const btns = [];
+  // Prev
+  btns.push(`<button class="pg-btn${pag===1?' pg-dis':''}" data-pg="${pag-1}" ${pag===1?'disabled':''}>
+    <i class="bi bi-chevron-left"></i>
+  </button>`);
+  // Pages
+  let pages = [];
+  if (paginas <= 7) {
+    for (let i = 1; i <= paginas; i++) pages.push(i);
+  } else {
+    pages = [1];
+    if (pag > 3) pages.push('...');
+    for (let i = Math.max(2, pag-1); i <= Math.min(paginas-1, pag+1); i++) pages.push(i);
+    if (pag < paginas - 2) pages.push('...');
+    pages.push(paginas);
+  }
+  pages.forEach(p => {
+    if (p === '...') {
+      btns.push(`<span class="pg-dots">…</span>`);
+    } else {
+      btns.push(`<button class="pg-btn${p===pag?' pg-active':''}" data-pg="${p}">${p}</button>`);
+    }
+  });
+  // Next
+  btns.push(`<button class="pg-btn${pag===paginas?' pg-dis':''}" data-pg="${pag+1}" ${pag===paginas?'disabled':''}>
+    <i class="bi bi-chevron-right"></i>
+  </button>`);
+
+  el.innerHTML = `
+    <div class="pg-wrap">
+      <span class="pg-info">Mostrando ${desde+1}–${hasta} de ${total}</span>
+      <div class="pg-btns">${btns.join('')}</div>
+    </div>`;
+
+  el.querySelectorAll('.pg-btn:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.pg)));
+  });
 }
 
 /* ── Stock badge/bar ───────────────────────────────────────── */
@@ -114,11 +201,12 @@ function sparkline(data, color = '#2563EB') {
 /* ── Page header helper ────────────────────────────────────── */
 function setPageHeader(title, sub = '', actionsHTML = '') {
   const ph = $('pageHeader');
+  if (!ph) return;
   ph.style.display = 'flex';
-  $('pageTitle').textContent   = title;
-  $('pageSub').textContent     = sub;
-  $('pageActions').innerHTML   = actionsHTML;
-  $('topbar-breadcrumb').textContent = title;
+  if ($('pageTitle'))         $('pageTitle').textContent         = title;
+  if ($('pageSub'))           $('pageSub').textContent           = sub;
+  if ($('pageActions'))       $('pageActions').innerHTML         = actionsHTML;
+  if ($('topbar-breadcrumb')) $('topbar-breadcrumb').textContent = title;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -140,7 +228,14 @@ function showTab(slug) {
   $('pageHeader').style.display = 'none';
   $('pageActions').innerHTML = '';
 
-  if (tabs[slug]) tabs[slug](area);
+  if (tabs[slug]) {
+    tabs[slug](area);
+  } else {
+    area.innerHTML = `<div class="ds-card" style="padding:32px;text-align:center;color:var(--text-muted)">
+      <i class="bi bi-exclamation-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>
+      Sección no disponible.
+    </div>`;
+  }
 }
 
 /* ── Sidebar nav ───────────────────────────────────────────── */
@@ -265,8 +360,8 @@ registerTab('dashboard', async area => {
       green : [8,6,7,9,8,10, d.totalProductos - d.sinStock - d.stockBajo],
       yellow: [1,3,2,4,2,3,d.stockBajo],
       red   : [2,1,3,1,2,1,d.sinStock],
-      cyan  : [5,8,6,9,7,10,d.totalMovimientos%10],
-      violet: [3,5,4,6,5,7,d.movimientosUltimoMes%10],
+      cyan  : [5,8,6,9,7,10,d.totalMovimientos > 0 ? 10 : 0],
+      violet: [3,5,4,6,5,7,d.movimientosUltimoMes > 0 ? 7 : 0],
     };
     const sparkColors = { blue:'#3B82F6', green:'#10B981', yellow:'#F59E0B', red:'#EF4444', cyan:'#06B6D4', violet:'#7C3AED' };
 
@@ -287,7 +382,7 @@ registerTab('dashboard', async area => {
         ${[
           ['Tasa de disponibilidad', d.totalProductos > 0 ? Math.round(((d.totalProductos - d.sinStock) / d.totalProductos) * 100) + '%' : '—', 'var(--success)'],
           ['Productos con alerta',   d.stockBajo + d.sinStock, 'var(--warning)'],
-          ['Mov. promedio/mes',      d.totalMovimientos > 0 ? fmtNum(Math.round(d.movimientosUltimoMes)) : '0', 'var(--cyan)'],
+          ['Mov. último mes',         fmtNum(d.movimientosUltimoMes || 0), 'var(--cyan)'],
         ].map(([lbl, val, col]) => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-subtle)">
             <span style="font-size:12px;color:var(--text-secondary)">${lbl}</span>
@@ -395,15 +490,7 @@ registerTab('clientes', async area => {
       if (r?.ok) {
         closeModal();
         cargarClientes();
-        // Refrescar selector sidebar
-        if (selCli) {
-          selCli.innerHTML = '<option value="">Todos los clientes</option>';
-          const rc = await api('GET', '/api/clientes', { activos:'1' });
-          rc?.data?.forEach(c => {
-            selCli.insertAdjacentHTML('beforeend',
-              `<option value="${c.codigo}">${c.nombre}</option>`);
-          });
-        }
+        await refrescarSelectorClientes();
       }
     });
   }
@@ -476,7 +563,7 @@ registerTab('clientes', async area => {
           estado: btn.dataset.estado,
         });
         toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
-        if (r2?.ok) cargarClientes();
+        if (r2?.ok) { cargarClientes(); await refrescarSelectorClientes(); }
       });
     });
 
@@ -486,7 +573,7 @@ registerTab('clientes', async area => {
         if (!confirm(`¿Eliminar el cliente "${btn.dataset.nombre}"?\nSolo es posible si no tiene stock ni movimientos.`)) return;
         const r2 = await api('POST', '/api/clientes/eliminar', { codigo: btn.dataset.codigo });
         toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
-        if (r2?.ok) cargarClientes();
+        if (r2?.ok) { cargarClientes(); await refrescarSelectorClientes(); }
       });
     });
   }
@@ -553,8 +640,14 @@ registerTab('productos', async area => {
         `<option value="${g}">${g}</option>`);
     });
 
+    let pagCat = 1;
+    const POR_PAG_CAT = 25;
+
     function render(d) {
-      $('tablaCatalogo').innerHTML = d.length
+      const { slice, pag, paginas, total, desde } = paginar(d, pagCat, POR_PAG_CAT);
+      pagCat = pag;
+
+      $('tablaCatalogo').innerHTML = slice.length
         ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
             <table class="ds-table">
               <thead>
@@ -566,7 +659,7 @@ registerTab('productos', async area => {
                   <th>Acciones</th>
                 </tr>
               </thead>
-              <tbody>${d.map(p => `
+              <tbody>${slice.map(p => `
                 <tr>
                   <td><span class="chip">${p.codigo}</span></td>
                   <td class="td-primary">${p.nombre}</td>
@@ -592,8 +685,11 @@ registerTab('productos', async area => {
                 </tr>`).join('')}
               </tbody>
             </table>
-          </div>`
+          </div>
+          <div id="pagerCat"></div>`
         : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin productos.</div>`;
+
+      renderPager('pagerCat', pag, paginas, total, desde, POR_PAG_CAT, np => { pagCat = np; render(d); });
 
       // Editar
       $$('.btn-editar-prod').forEach(btn => {
@@ -668,6 +764,7 @@ registerTab('productos', async area => {
         p.codigo.toLowerCase().includes(txt) ||
         p.grupo.toLowerCase().includes(txt));
       if (grupo) d = d.filter(p => p.grupo === grupo);
+      pagCat = 1;
       render(d);
     }
 
@@ -812,7 +909,8 @@ registerTab('productos', async area => {
       }, 260);
     });
     document.addEventListener('click', e => {
-      if (!$('habBusca')?.contains(e.target)) $('habDrop').style.display = 'none';
+      const wrap = $('habBusca')?.closest('[style*="position:relative"]') || $('habBusca')?.parentElement;
+      if (!wrap?.contains(e.target)) $('habDrop').style.display = 'none';
     });
 
     $('btnHabilitar').addEventListener('click', async () => {
@@ -932,7 +1030,8 @@ registerTab('movimientos', async area => {
     }, 260);
   });
   document.addEventListener('click', e => {
-    if (!$('movBusca')?.contains(e.target)) $('movDrop').style.display = 'none';
+    const wrap = $('movBusca')?.closest('[style*="position:relative"]') || $('movBusca')?.parentElement;
+    if (!wrap?.contains(e.target)) $('movDrop').style.display = 'none';
   });
 
   $('btnLimpiarMov').addEventListener('click', () => {
@@ -943,7 +1042,10 @@ registerTab('movimientos', async area => {
   });
 
   $('btnGuardarMov').addEventListener('click', async () => {
-    if (!$('movCodigo').value)   { toast('Seleccione un producto.','warning'); return; }
+    if (!$('movCodigo').value || !$('movBusca').value.trim()) {
+      toast('Seleccione un producto del listado.','warning'); return;
+    }
+    if (!$('movFecha').value) { toast('Ingrese una fecha.','warning'); return; }
     if (!$('movCantidad').value || parseFloat($('movCantidad').value) <= 0) {
       toast('Ingrese una cantidad válida.','warning'); return;
     }
@@ -965,10 +1067,14 @@ registerTab('movimientos', async area => {
 ══════════════════════════════════════════════════════════════ */
 registerTab('inventario', async area => {
   setPageHeader('Inventario', 'Stock actual en tiempo real',
-    `<a class="btn btn-secondary" href="${API}/api/inventario/exportar?cliente=${clienteActual()}" target="_blank">
+    `<button class="btn btn-secondary" id="btnExportarCSV">
       <i class="bi bi-download"></i>Exportar CSV
-    </a>
+    </button>
     <button class="btn btn-primary" id="btnRefreshInv"><i class="bi bi-arrow-clockwise"></i>Actualizar</button>`);
+  // Construir URL al momento del click para reflejar el cliente activo
+  $('pageActions').querySelector('#btnExportarCSV')?.addEventListener('click', () => {
+    window.open(`${API}/api/inventario/exportar?cliente=${clienteActual()}`, '_blank');
+  });
 
   area.innerHTML = `
     <div class="filter-row" style="margin-bottom:14px">
@@ -995,12 +1101,18 @@ registerTab('inventario', async area => {
 
   let stockData = [];
 
+  let pagInv = 1;
+  const POR_PAG_INV = 25;
+
   function renderStock(d) {
-    $('tablaInv').innerHTML = d.length
+    const { slice, pag, paginas, total, desde } = paginar(d, pagInv, POR_PAG_INV);
+    pagInv = pag;
+
+    $('tablaInv').innerHTML = slice.length
       ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
           <table class="ds-table">
             <thead><tr><th>Cliente</th><th>Código</th><th>Producto</th><th>Unidad</th><th>Grupo</th><th>Mín</th><th>Stock Actual</th></tr></thead>
-            <tbody>${d.map(r => `
+            <tbody>${slice.map(r => `
               <tr>
                 <td style="color:var(--text-muted)">${r.cliente_nombre}</td>
                 <td><span class="chip">${r.codigo}</span></td>
@@ -1012,8 +1124,11 @@ registerTab('inventario', async area => {
               </tr>`).join('')}
             </tbody>
           </table>
-        </div>`
+        </div>
+        <div id="pagerInv"></div>`
       : `<div style="padding:40px;text-align:center;color:var(--text-muted)">Sin datos de inventario.</div>`;
+
+    renderPager('pagerInv', pag, paginas, total, desde, POR_PAG_INV, np => { pagInv = np; renderStock(d); });
   }
 
   function applyFilters() {
@@ -1024,6 +1139,7 @@ registerTab('inventario', async area => {
     if (est === 'ok')    d = d.filter(r => r.stock_actual > 0 && (r.stock_min <= 0 || r.stock_actual > r.stock_min));
     if (est === 'low')   d = d.filter(r => r.stock_actual > 0 && r.stock_min > 0 && r.stock_actual <= r.stock_min);
     if (est === 'empty') d = d.filter(r => r.stock_actual <= 0);
+    pagInv = 1;
     renderStock(d);
   }
 
@@ -1065,8 +1181,9 @@ registerTab('reportes', async area => {
             <option value="AJUSTE_NEGATIVO">Ajuste Negativo</option>
           </select>
         </div>
-        <div class="ds-field" style="align-self:flex-end">
+        <div class="ds-field" style="align-self:flex-end;display:flex;gap:8px">
           <button id="btnGenRep" class="btn btn-primary"><i class="bi bi-search"></i>Generar</button>
+          <button id="btnExportRep" class="btn btn-secondary" disabled><i class="bi bi-download"></i>Exportar CSV</button>
         </div>
       </div>
     </div>
@@ -1085,25 +1202,63 @@ registerTab('reportes', async area => {
       tipo   : $('repTipo').value,
     });
     const rows = r?.data || [];
-    $('tablaRep').innerHTML = rows.length
-      ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
-          <table class="ds-table">
-            <thead><tr><th>Fecha</th><th>Cliente</th><th>Código</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock Res.</th><th>Usuario</th></tr></thead>
-            <tbody>${rows.map(r2 => `
-              <tr>
-                <td style="font-family:var(--font-mono);font-size:11px">${fmtDate(r2.fecha_movimiento)}</td>
-                <td style="color:var(--text-muted)">${r2.cliente_nombre}</td>
-                <td><span class="chip">${r2.codigo}</span></td>
-                <td class="td-primary">${r2.producto}</td>
-                <td><span class="badge badge-${r2.tipo.toLowerCase()}">${r2.tipo.replace('_',' ')}</span></td>
-                <td style="font-family:var(--font-mono);font-weight:600">${fmtNum(r2.cantidad)}</td>
-                <td style="font-family:var(--font-mono)">${fmtNum(r2.stock_resultante)}</td>
-                <td style="color:var(--text-muted);font-size:11px">${r2.registrado_por}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>`
-      : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin resultados para el periodo.</div>`;
+    let pagRep = 1;
+    const POR_PAG_REP = 25;
+
+    function renderRep(d) {
+      const { slice, pag, paginas, total, desde } = paginar(d, pagRep, POR_PAG_REP);
+      pagRep = pag;
+
+      $('tablaRep').innerHTML = slice.length
+        ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
+            <table class="ds-table">
+              <thead><tr><th>Fecha</th><th>Cliente</th><th>Código</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock Res.</th><th>Usuario</th></tr></thead>
+              <tbody>${slice.map(r2 => `
+                <tr>
+                  <td style="font-family:var(--font-mono);font-size:11px">${fmtDate(r2.fecha_movimiento)}</td>
+                  <td style="color:var(--text-muted)">${r2.cliente_nombre}</td>
+                  <td><span class="chip">${r2.codigo}</span></td>
+                  <td class="td-primary">${r2.producto}</td>
+                  <td><span class="badge badge-${r2.tipo.toLowerCase()}">${r2.tipo.replace('_',' ')}</span></td>
+                  <td style="font-family:var(--font-mono);font-weight:600">${fmtNum(r2.cantidad)}</td>
+                  <td style="font-family:var(--font-mono)">${fmtNum(r2.stock_resultante)}</td>
+                  <td style="color:var(--text-muted);font-size:11px">${r2.registrado_por}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div id="pagerRep"></div>`
+        : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin resultados para el periodo.</div>`;
+
+      renderPager('pagerRep', pag, paginas, total, desde, POR_PAG_REP, np => { pagRep = np; renderRep(d); });
+    }
+
+    // ── Exportar CSV ──────────────────────────────────────────
+    function exportarCSV(data) {
+      if (!data.length) return;
+      const BOM = '\uFEFF';
+      const cab = ['Fecha','Cliente','Codigo','Producto','Tipo','Cantidad','Stock Resultante','Usuario'];
+      const lineas = data.map(r2 => [
+        r2.fecha_movimiento, r2.cliente_nombre, r2.codigo,
+        r2.producto, r2.tipo, r2.cantidad, r2.stock_resultante, r2.registrado_por,
+      ].map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(','));
+      const csv  = BOM + [cab.join(','), ...lineas].join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'Reporte_' + ($('repDesde')?.value||'') + '_' + ($('repHasta')?.value||'') + '.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    const btnExp = $('btnExportRep');
+    if (btnExp) {
+      btnExp.disabled = rows.length === 0;
+      btnExp.onclick  = () => exportarCSV(rows);
+    }
+
+    renderRep(rows);
   });
 });
 
@@ -1357,7 +1512,64 @@ registerTab('configuracion', area => {
       toast('Error de conexión al importar.', 'danger');
     }
   });
+
+  // ── Zona de Peligro ────────────────────────────────────────
+  const resetCard = document.createElement('div');
+  resetCard.className = 'ds-card';
+  resetCard.style.cssText = 'grid-column:1/-1;border-color:rgba(239,68,68,.3);margin-top:14px';
+  resetCard.innerHTML = `
+    <div class="ds-card-title" style="color:var(--danger)">
+      <i class="bi bi-exclamation-triangle-fill"></i>Zona de Peligro — Resetear Sistema
+    </div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;line-height:1.6">
+      Elimina <strong style="color:var(--text-primary)">todos</strong> los clientes, productos,
+      movimientos e inventario. Reinicia los correlativos a 0.
+      <strong style="color:var(--danger)">Esta acción no se puede deshacer.</strong>
+      Los usuarios y permisos se conservan.
+    </p>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div class="ds-field" style="margin:0;flex:1;min-width:200px">
+        <label class="ds-label">Escribe <strong>RESETEAR</strong> para confirmar</label>
+        <input type="text" id="inputConfirmarReset" class="ds-input"
+          placeholder="RESETEAR" style="border-color:rgba(239,68,68,.4)">
+      </div>
+      <button id="btnResetear" class="btn btn-danger" style="padding:8px 20px">
+        <i class="bi bi-trash3-fill"></i>Resetear Todo
+      </button>
+    </div>
+    <div id="resReset" style="margin-top:12px"></div>`;
+  area.appendChild(resetCard);
+
+  resetCard.querySelector('#btnResetear').addEventListener('click', async () => {
+    const inputReset = resetCard.querySelector('#inputConfirmarReset');
+    const resReset   = resetCard.querySelector('#resReset');
+    const btnReset   = resetCard.querySelector('#btnResetear');
+    const confirmado = inputReset.value.trim();
+
+    if (confirmado !== 'RESETEAR') {
+      toast('Escribe RESETEAR en el campo para confirmar.', 'warning'); return;
+    }
+    if (!confirm('¿Eliminarás TODOS los datos de clientes, productos, movimientos e inventario? Esta acción no se puede deshacer.')) return;
+
+    btnReset.disabled = true;
+    btnReset.innerHTML = '<i class="bi bi-hourglass-split"></i>Reseteando...';
+
+    const r = await api('POST', '/api/configuracion/resetear', { confirmar: 'RESETEAR' });
+
+    btnReset.disabled = false;
+    btnReset.innerHTML = '<i class="bi bi-trash3-fill"></i>Resetear Todo';
+    inputReset.value = '';
+
+    resReset.innerHTML = `
+      <div class="ds-alert ${r?.ok ? 'ds-alert-success' : 'ds-alert-danger'}">
+        <i class="bi ${r?.ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
+        <span>${r?.mensaje || 'Error desconocido'}</span>
+      </div>`;
+
+    toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger', 6000);
+    if (r?.ok) await refrescarSelectorClientes();
   });
+}); // cierre de registerTab('configuracion', ...)
 
 /* ══════════════════════════════════════════════════════════════
    USUARIOS
@@ -1559,10 +1771,14 @@ ${u.usuario !== 'admin' ? `
   }
 
   $('btnCrearUsr')?.addEventListener('click', async () => {
-    const r = await api('POST', '/api/usuarios', {
-      usuario: $('usrNombre').value.trim(), password: $('usrPass').value,
-      rol: $('usrRol').value, cliente: $('usrCliente').value,
-    });
+    const nombre = $('usrNombre').value.trim();
+    const pass   = $('usrPass').value;
+    const rol    = $('usrRol').value;
+    const cliente = $('usrCliente').value;
+    if (!nombre)  { toast('El nombre de usuario es obligatorio.', 'warning'); return; }
+    if (!pass)    { toast('La contraseña es obligatoria.', 'warning'); return; }
+    if (rol === 'CLIENTE' && !cliente) { toast('Seleccione un cliente para este rol.', 'warning'); return; }
+    const r = await api('POST', '/api/usuarios', { usuario: nombre, password: pass, rol, cliente });
     toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger');
     if (r?.ok) { $('formNuevoUsr').style.display='none'; $('usrNombre').value=''; $('usrPass').value=''; cargarUsuarios(); }
   });
