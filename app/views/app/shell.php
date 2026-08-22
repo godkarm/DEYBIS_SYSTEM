@@ -68,13 +68,15 @@
     <span class="sb-nav-label">Módulos</span>
     <?php
     $menu = [
-      'dashboard'     => ['icon'=>'bi-speedometer2',   'label'=>'Dashboard'],
-      'clientes'      => ['icon'=>'bi-building',        'label'=>'Clientes'],
-      'productos'     => ['icon'=>'bi-box-seam',         'label'=>'Productos'],
-      'movimientos'   => ['icon'=>'bi-arrow-left-right', 'label'=>'Movimientos'],
-      'inventario'    => ['icon'=>'bi-clipboard-data',   'label'=>'Inventario'],
-      'reportes'      => ['icon'=>'bi-graph-up-arrow',   'label'=>'Reportes'],
-      'buscar'        => ['icon'=>'bi-search',           'label'=>'Buscar'],
+      'dashboard'      => ['icon'=>'bi-speedometer2',      'label'=>'Dashboard'],
+      'clientes'       => ['icon'=>'bi-building',           'label'=>'Clientes'],
+      'productos'      => ['icon'=>'bi-box-seam',           'label'=>'Productos'],
+      'requerimientos' => ['icon'=>'bi-clipboard-check',    'label'=>'Requerimientos'],
+      'movimientos'    => ['icon'=>'bi-arrow-left-right',   'label'=>'Movimientos'],
+      'inventario'     => ['icon'=>'bi-clipboard-data',     'label'=>'Inventario'],
+      'kardex'         => ['icon'=>'bi-table',              'label'=>'Kardex'],
+      'reportes'       => ['icon'=>'bi-graph-up-arrow',     'label'=>'Reportes'],
+      'buscar'         => ['icon'=>'bi-search',             'label'=>'Buscar'],
     ];
     foreach ($menu as $slug => $item):
       if (empty($permisos[$slug])) continue;

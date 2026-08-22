@@ -127,6 +127,13 @@ $routes = [
     'GET /api/configuracion/maestro'   => ['ConfiguracionController', 'descargarMaestro'],
     'POST /api/configuracion/importar' => ['ConfiguracionController', 'importarCatalogo'],
     'POST /api/configuracion/resetear' => ['ConfiguracionController', 'resetearSistema'],
+    'POST /api/inventario/stock-min' => ['InventarioController', 'actualizarStockMin'],
+    'GET /api/requerimientos'           => ['RequerimientoController', 'index'],
+    'GET /api/requerimientos/detalle'   => ['RequerimientoController', 'show'],
+    'POST /api/requerimientos'          => ['RequerimientoController', 'store'],
+    'POST /api/requerimientos/aprobar'  => ['RequerimientoController', 'aprobar'],
+    'POST /api/requerimientos/rechazar' => ['RequerimientoController', 'rechazar'],
+    'POST /api/requerimientos/despachar'=> ['RequerimientoController', 'despachar'],
 ];
 
 if (isset($routes[$key])) {

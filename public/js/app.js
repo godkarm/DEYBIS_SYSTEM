@@ -441,9 +441,9 @@ registerTab('clientes', async area => {
           <i class="bi bi-hash ds-input-icon"></i>
           <input type="text" id="modalCliCodigo" class="ds-input"
             placeholder="CLI001"
-            style="text-transform:uppercase"
+            style="${esEdicion ? 'opacity:.6;cursor:not-allowed;text-transform:uppercase' : 'text-transform:uppercase'}"
             value="${esEdicion ? cliente.codigo : ''}"
-            ${esEdicion ? 'readonly style="opacity:.6;cursor:not-allowed;text-transform:uppercase"' : ''}>
+            ${esEdicion ? 'readonly' : ''}>
         </div>
       </div>
       <div class="ds-field">
@@ -1034,12 +1034,13 @@ registerTab('movimientos', async area => {
     if (!wrap?.contains(e.target)) $('movDrop').style.display = 'none';
   });
 
-  $('btnLimpiarMov').addEventListener('click', () => {
+  function limpiarFormMov() {
     $('movBusca').value = ''; $('movCodigo').value = '';
     $('movCantidad').value = ''; $('movObs').value = '';
     $('movFecha').value = new Date().toISOString().slice(0,10);
     $('movTipo').value = 'INGRESO';
-  });
+  }
+  $('btnLimpiarMov').addEventListener('click', limpiarFormMov);
 
   $('btnGuardarMov').addEventListener('click', async () => {
     if (!$('movCodigo').value || !$('movBusca').value.trim()) {
@@ -1058,7 +1059,7 @@ registerTab('movimientos', async area => {
       observaciones: $('movObs').value,
     });
     toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger');
-    if (r?.ok) $('btnLimpiarMov').click();
+    if (r?.ok) limpiarFormMov();
   });
 });
 
@@ -1193,6 +1194,60 @@ registerTab('reportes', async area => {
       </div>
     </div>`;
 
+  let pagRep = 1;
+  const POR_PAG_REP = 25;
+  let rowsRep = [];
+
+  function renderRep(d) {
+    const { slice, pag, paginas, total, desde } = paginar(d, pagRep, POR_PAG_REP);
+    pagRep = pag;
+
+    $('tablaRep').innerHTML = slice.length
+      ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
+          <table class="ds-table">
+            <thead><tr><th>Fecha</th><th>Cliente</th><th>Código</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock Res.</th><th>Usuario</th></tr></thead>
+            <tbody>${slice.map(r2 => `
+              <tr>
+                <td style="font-family:var(--font-mono);font-size:11px">${fmtDate(r2.fecha_movimiento)}</td>
+                <td style="color:var(--text-muted)">${r2.cliente_nombre}</td>
+                <td><span class="chip">${r2.codigo}</span></td>
+                <td class="td-primary">${r2.producto}</td>
+                <td><span class="badge badge-${r2.tipo.toLowerCase()}">${r2.tipo.replace('_',' ')}</span></td>
+                <td style="font-family:var(--font-mono);font-weight:600">${fmtNum(r2.cantidad)}</td>
+                <td style="font-family:var(--font-mono)">${fmtNum(r2.stock_resultante)}</td>
+                <td style="color:var(--text-muted);font-size:11px">${r2.registrado_por}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div id="pagerRep"></div>`
+      : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin resultados para el periodo.</div>`;
+
+    renderPager('pagerRep', pag, paginas, total, desde, POR_PAG_REP, np => { pagRep = np; renderRep(rowsRep); });
+  }
+
+  // ── Exportar CSV ──────────────────────────────────────────
+  function exportarCSV(data) {
+    if (!data.length) return;
+    const BOM = '\uFEFF';
+    const cab = ['Fecha','Cliente','Codigo','Producto','Tipo','Cantidad','Stock Resultante','Usuario'];
+    const lineas = data.map(r2 => [
+      r2.fecha_movimiento, r2.cliente_nombre, r2.codigo,
+      r2.producto, r2.tipo, r2.cantidad, r2.stock_resultante, r2.registrado_por,
+    ].map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(','));
+    const csv  = BOM + [cab.join(','), ...lineas].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'Reporte_' + ($('repDesde')?.value||'') + '_' + ($('repHasta')?.value||'') + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const btnExp = $('btnExportRep');
+  if (btnExp) btnExp.onclick = () => exportarCSV(rowsRep);
+
   $('btnGenRep').addEventListener('click', async () => {
     $('tablaRep').innerHTML = `<div style="padding:16px">${skelRows()}</div>`;
     const r = await api('GET', '/api/reportes/historial', {
@@ -1201,64 +1256,10 @@ registerTab('reportes', async area => {
       hasta  : $('repHasta').value,
       tipo   : $('repTipo').value,
     });
-    const rows = r?.data || [];
-    let pagRep = 1;
-    const POR_PAG_REP = 25;
-
-    function renderRep(d) {
-      const { slice, pag, paginas, total, desde } = paginar(d, pagRep, POR_PAG_REP);
-      pagRep = pag;
-
-      $('tablaRep').innerHTML = slice.length
-        ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
-            <table class="ds-table">
-              <thead><tr><th>Fecha</th><th>Cliente</th><th>Código</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock Res.</th><th>Usuario</th></tr></thead>
-              <tbody>${slice.map(r2 => `
-                <tr>
-                  <td style="font-family:var(--font-mono);font-size:11px">${fmtDate(r2.fecha_movimiento)}</td>
-                  <td style="color:var(--text-muted)">${r2.cliente_nombre}</td>
-                  <td><span class="chip">${r2.codigo}</span></td>
-                  <td class="td-primary">${r2.producto}</td>
-                  <td><span class="badge badge-${r2.tipo.toLowerCase()}">${r2.tipo.replace('_',' ')}</span></td>
-                  <td style="font-family:var(--font-mono);font-weight:600">${fmtNum(r2.cantidad)}</td>
-                  <td style="font-family:var(--font-mono)">${fmtNum(r2.stock_resultante)}</td>
-                  <td style="color:var(--text-muted);font-size:11px">${r2.registrado_por}</td>
-                </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-          <div id="pagerRep"></div>`
-        : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin resultados para el periodo.</div>`;
-
-      renderPager('pagerRep', pag, paginas, total, desde, POR_PAG_REP, np => { pagRep = np; renderRep(d); });
-    }
-
-    // ── Exportar CSV ──────────────────────────────────────────
-    function exportarCSV(data) {
-      if (!data.length) return;
-      const BOM = '\uFEFF';
-      const cab = ['Fecha','Cliente','Codigo','Producto','Tipo','Cantidad','Stock Resultante','Usuario'];
-      const lineas = data.map(r2 => [
-        r2.fecha_movimiento, r2.cliente_nombre, r2.codigo,
-        r2.producto, r2.tipo, r2.cantidad, r2.stock_resultante, r2.registrado_por,
-      ].map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(','));
-      const csv  = BOM + [cab.join(','), ...lineas].join('\r\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = 'Reporte_' + ($('repDesde')?.value||'') + '_' + ($('repHasta')?.value||'') + '.csv';
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-
-    const btnExp = $('btnExportRep');
-    if (btnExp) {
-      btnExp.disabled = rows.length === 0;
-      btnExp.onclick  = () => exportarCSV(rows);
-    }
-
-    renderRep(rows);
+    rowsRep = r?.data || [];
+    pagRep  = 1;
+    if (btnExp) btnExp.disabled = rowsRep.length === 0;
+    renderRep(rowsRep);
   });
 });
 
@@ -1287,7 +1288,10 @@ registerTab('buscar', async area => {
     clearTimeout(bTimer);
     bTimer = setTimeout(async () => {
       const q = this.value.trim();
-      if (!q) return;
+      if (!q) {
+        $('resBusca').innerHTML = `<i class="bi bi-search" style="font-size:28px;display:block;margin-bottom:8px;opacity:.3"></i>Ingresa al menos un carácter para buscar.`;
+        return;
+      }
       $('resBusca').innerHTML = `<div style="padding:16px">${skelRows()}</div>`;
       const r = await api('GET', '/api/buscar', { q, cliente: clienteActual() });
       const rows = r?.data || [];
@@ -1706,7 +1710,7 @@ ${u.usuario !== 'admin' ? `
       btn.addEventListener('click', () => {
         const usuario = btn.dataset.usuario;
         const rolActual = btn.dataset.rol;
-        const clienteActual = btn.dataset.cliente;
+        const clienteActualVal = btn.dataset.cliente;
         const estadoActual = btn.dataset.estado;
 
         openModal(
@@ -1742,8 +1746,8 @@ ${u.usuario !== 'admin' ? `
         );
 
         // Setear cliente actual en el select
-        if (clienteActual && document.getElementById('editCliente')) {
-          document.getElementById('editCliente').value = clienteActual;
+        if (clienteActualVal && document.getElementById('editCliente')) {
+          document.getElementById('editCliente').value = clienteActualVal;
         }
 
         // Mostrar/ocultar selector de cliente según rol
@@ -1863,6 +1867,465 @@ ${u.usuario !== 'admin' ? `
 
   cargarUsuarios();
   cargarPermisos();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   REQUERIMIENTOS
+══════════════════════════════════════════════════════════════ */
+registerTab('requerimientos', async area => {
+  const esCliente = USR.rol === 'CLIENTE';
+  setPageHeader('Requerimientos', 'Gestión de pedidos de stock',
+    esCliente
+      ? `<button class="btn btn-primary" id="btnNuevoReq"><i class="bi bi-plus-lg"></i>Nuevo Requerimiento</button>`
+      : '');
+
+  area.innerHTML = `
+    <div class="ds-card" style="margin-bottom:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        ${!esCliente ? `
+        <div class="ds-field" style="margin:0;min-width:180px">
+          <label class="ds-label">Estado</label>
+          <select id="filtroEstadoReq" class="ds-select">
+            <option value="">Todos</option>
+            <option value="PENDIENTE">Pendiente</option>
+            <option value="APROBADO">Aprobado</option>
+            <option value="DESPACHADO">Despachado</option>
+            <option value="RECHAZADO">Rechazado</option>
+          </select>
+        </div>` : ''}
+        <button id="btnFiltrarReq" class="btn btn-secondary"><i class="bi bi-search"></i>Buscar</button>
+      </div>
+    </div>
+    <div class="ds-card ds-card-flush">
+      <div id="tablaReq">${skelRows()}</div>
+    </div>`;
+
+  // ── Badge de estado ───────────────────────────────────────
+  function badgeReq(estado) {
+    const map = {
+      PENDIENTE : 'badge-low',
+      APROBADO  : 'badge-info',
+      DESPACHADO: 'badge-ok',
+      RECHAZADO : 'badge-empty',
+      CERRADO   : 'badge-inactive',
+    };
+    return `<span class="badge ${map[estado]||'badge-inactive'}">${estado}</span>`;
+  }
+
+  // ── Cargar lista ──────────────────────────────────────────
+  async function cargarReqs() {
+    $('tablaReq').innerHTML = `<div style="padding:16px">${skelRows()}</div>`;
+    const params = { cliente: clienteActual() };
+    const est = $('filtroEstadoReq')?.value;
+    if (est) params.estado = est;
+
+    const r = await api('GET', '/api/requerimientos', params);
+    const rows = r?.data || [];
+
+    $('tablaReq').innerHTML = rows.length
+      ? `<div class="ds-table-wrapper" style="border:none;border-radius:0">
+          <table class="ds-table">
+            <thead><tr>
+              <th>N°</th><th>Cliente</th><th>Estado</th>
+              <th>Ítems</th><th>Solicitado por</th><th>Fecha</th><th>Acciones</th>
+            </tr></thead>
+            <tbody>${rows.map(r2 => `
+              <tr>
+                <td><span class="chip">${r2.numero}</span></td>
+                <td style="color:var(--text-muted)">${r2.cliente_nombre}</td>
+                <td>${badgeReq(r2.estado)}</td>
+                <td style="text-align:center;font-family:var(--font-mono)">${r2.total_items}</td>
+                <td style="color:var(--text-muted);font-size:11px">${r2.solicitado_por}</td>
+                <td style="color:var(--text-muted);font-size:11px">${fmtDate(r2.created_at)}</td>
+                <td>
+                  <div class="btn-group">
+                    <button class="btn btn-xs btn-secondary btn-ver-req" data-id="${r2.id}" data-num="${r2.numero}">
+                      <i class="bi bi-eye"></i>Ver
+                    </button>
+                    ${!esCliente && r2.estado === 'PENDIENTE' ? `
+                    <button class="btn btn-xs btn-success btn-aprobar-req" data-id="${r2.id}" data-num="${r2.numero}">
+                      <i class="bi bi-check-lg"></i>Aprobar
+                    </button>
+                    <button class="btn btn-xs btn-danger btn-rechazar-req" data-id="${r2.id}" data-num="${r2.numero}">
+                      <i class="bi bi-x-lg"></i>Rechazar
+                    </button>` : ''}
+                    ${!esCliente && r2.estado === 'APROBADO' ? `
+                    <button class="btn btn-xs btn-primary btn-despachar-req" data-id="${r2.id}" data-num="${r2.numero}">
+                      <i class="bi bi-truck"></i>Despachar
+                    </button>` : ''}
+                  </div>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`
+      : `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin requerimientos.</div>`;
+
+    // Ver detalle
+    $$('.btn-ver-req').forEach(btn => {
+      btn.addEventListener('click', () => verReq(parseInt(btn.dataset.id), btn.dataset.num));
+    });
+
+    // Aprobar
+    $$('.btn-aprobar-req').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`¿Aprobar requerimiento ${btn.dataset.num}?`)) return;
+        const r2 = await api('POST', '/api/requerimientos/aprobar', { id: parseInt(btn.dataset.id) });
+        toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+        if (r2?.ok) cargarReqs();
+      });
+    });
+
+    // Rechazar
+    $$('.btn-rechazar-req').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`¿Rechazar requerimiento ${btn.dataset.num}?`)) return;
+        const r2 = await api('POST', '/api/requerimientos/rechazar', { id: parseInt(btn.dataset.id) });
+        toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+        if (r2?.ok) cargarReqs();
+      });
+    });
+
+    // Despachar
+    $$('.btn-despachar-req').forEach(btn => {
+      btn.addEventListener('click', () => modalDespachar(parseInt(btn.dataset.id), btn.dataset.num));
+    });
+  }
+
+  // ── Ver detalle ───────────────────────────────────────────
+  async function verReq(id, numero) {
+    openModal(
+      `<i class="bi bi-file-text"></i> ${numero}`,
+      `<div>${skelRows(3)}</div>`,
+      `<button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>`
+    );
+    const r = await api('GET', '/api/requerimientos/detalle', { id });
+    if (!r?.ok) { $('dsModalBody').innerHTML = '<p style="color:var(--danger)">Error al cargar.</p>'; return; }
+    const { requerimiento: req, items } = r.data;
+
+    $('dsModalBody').innerHTML = `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--text-muted)">
+        <span><strong>Cliente:</strong> ${req.cliente_nombre}</span>
+        <span><strong>Estado:</strong> ${req.estado}</span>
+        <span><strong>Solicitado por:</strong> ${req.solicitado_por}</span>
+        <span><strong>Fecha:</strong> ${fmtDate(req.created_at)}</span>
+        ${req.observaciones ? `<span><strong>Obs:</strong> ${req.observaciones}</span>` : ''}
+      </div>
+      <div class="ds-table-wrapper">
+        <table class="ds-table">
+          <thead><tr>
+            <th>Código</th><th>Producto</th><th>Unidad</th>
+            <th>Cant. Solicitada</th><th>Cant. Despachada</th><th>Stock Actual</th>
+          </tr></thead>
+          <tbody>${items.map(it => `
+            <tr>
+              <td><span class="chip">${it.codigo}</span></td>
+              <td class="td-primary">${it.producto}</td>
+              <td style="color:var(--text-muted)">${it.unidad}</td>
+              <td style="font-family:var(--font-mono)">${fmtNum(it.cantidad_solicitada)}</td>
+              <td style="font-family:var(--font-mono)">${it.cantidad_despachada !== null ? fmtNum(it.cantidad_despachada) : '—'}</td>
+              <td>${stockBar(it.stock_actual, 0)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── Modal despachar ───────────────────────────────────────
+  async function modalDespachar(id, numero) {
+    openModal(
+      `<i class="bi bi-truck"></i> Despachar ${numero}`,
+      `<div>${skelRows(3)}</div>`,
+      `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+       <button class="btn btn-primary" id="btnConfDespacho"><i class="bi bi-check-lg"></i>Confirmar Despacho</button>`
+    );
+    const r = await api('GET', '/api/requerimientos/detalle', { id });
+    if (!r?.ok) return;
+    const { items } = r.data;
+
+    $('dsModalBody').innerHTML = `
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+        Ingresa la cantidad a despachar por ítem. Puede ser menor a la solicitada.
+      </p>
+      <div class="ds-table-wrapper">
+        <table class="ds-table">
+          <thead><tr>
+            <th>Código</th><th>Producto</th>
+            <th>Solicitado</th><th>Stock</th><th>A Despachar</th>
+          </tr></thead>
+          <tbody>${items.map((it, i) => `
+            <tr>
+              <td><span class="chip">${it.codigo}</span></td>
+              <td class="td-primary">${it.producto}</td>
+              <td style="font-family:var(--font-mono)">${fmtNum(it.cantidad_solicitada)}</td>
+              <td style="font-family:var(--font-mono);color:${it.stock_actual > 0 ? 'var(--success)' : 'var(--danger)'}">${fmtNum(it.stock_actual)}</td>
+              <td>
+                <input type="number" class="ds-input inp-despacho"
+                  data-id-item="${it.id}"
+                  style="width:100px;padding:4px 8px;font-size:12px"
+                  min="0" max="${it.stock_actual}"
+                  step="0.01"
+                  value="${Math.min(it.cantidad_solicitada, it.stock_actual)}">
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    document.getElementById('btnConfDespacho').addEventListener('click', async () => {
+      const despachos = [...$$('.inp-despacho')].map(inp => ({
+        id_item            : parseInt(inp.dataset.idItem),
+        cantidad_despachada: parseFloat(inp.value) || 0,
+      })).filter(d => d.cantidad_despachada > 0);
+
+      if (!despachos.length) { toast('Ingresa al menos una cantidad.', 'warning'); return; }
+
+      const r2 = await api('POST', '/api/requerimientos/despachar', { id, despachos });
+      toast(r2?.mensaje || 'Error', r2?.ok ? 'success' : 'danger');
+      if (r2?.ok) { closeModal(); cargarReqs(); }
+    });
+  }
+
+  // ── Nuevo requerimiento (solo CLIENTE) ────────────────────
+  async function modalNuevoReq() {
+    const inv = await api('GET', '/api/inventario', { cliente: clienteActual() });
+    const productos = inv?.data || [];
+
+    openModal(
+      `<i class="bi bi-plus-circle"></i> Nuevo Requerimiento`,
+      `<div class="ds-field">
+        <label class="ds-label">Observaciones (opcional)</label>
+        <textarea id="reqObs" class="ds-textarea" placeholder="Motivo, referencia, etc." style="min-height:56px"></textarea>
+      </div>
+      <div style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">
+        Selecciona productos y cantidades:
+      </div>
+      <div class="ds-table-wrapper" style="max-height:320px;overflow-y:auto">
+        <table class="ds-table">
+          <thead><tr>
+            <th style="width:36px"></th>
+            <th>Código</th><th>Producto</th><th>Unidad</th>
+            <th>Stock</th><th>Cantidad</th>
+          </tr></thead>
+          <tbody>${productos.map((p, i) => `
+            <tr>
+              <td><input type="checkbox" class="ds-check req-chk" data-idx="${i}" value="${p.codigo}"></td>
+              <td><span class="chip">${p.codigo}</span></td>
+              <td class="td-primary">${p.nombre}</td>
+              <td style="color:var(--text-muted)">${p.unidad}</td>
+              <td style="font-family:var(--font-mono)">${fmtNum(p.stock_actual)}</td>
+              <td>
+                <input type="number" class="ds-input req-cant" data-codigo="${p.codigo}"
+                  style="width:90px;padding:4px 8px;font-size:12px" min="0.01" step="0.01"
+                  placeholder="0" disabled>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`,
+      `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+       <button class="btn btn-primary" id="btnEnviarReq"><i class="bi bi-send"></i>Enviar Requerimiento</button>`
+    );
+
+    // Habilitar input al marcar checkbox
+    $$('.req-chk').forEach(chk => {
+      chk.addEventListener('change', function() {
+        const inp = document.querySelector(`.req-cant[data-codigo="${this.value}"]`);
+        if (inp) inp.disabled = !this.checked;
+        if (this.checked && inp) inp.focus();
+      });
+    });
+
+    document.getElementById('btnEnviarReq').addEventListener('click', async () => {
+      const items = [...$$('.req-chk:checked')].map(chk => {
+        const inp = document.querySelector(`.req-cant[data-codigo="${chk.value}"]`);
+        return { codigo: chk.value, cantidad: parseFloat(inp?.value) || 0 };
+      }).filter(it => it.cantidad > 0);
+
+      if (!items.length) { toast('Selecciona al menos un producto con cantidad.', 'warning'); return; }
+
+      const r = await api('POST', '/api/requerimientos', {
+        observaciones: $('reqObs').value,
+        items,
+      });
+      toast(r?.mensaje || 'Error', r?.ok ? 'success' : 'danger');
+      if (r?.ok) { closeModal(); cargarReqs(); }
+    });
+  }
+
+  // ── Eventos ───────────────────────────────────────────────
+  $('pageActions').querySelector('#btnNuevoReq')?.addEventListener('click', modalNuevoReq);
+  $('btnFiltrarReq')?.addEventListener('click', cargarReqs);
+  cargarReqs();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   KARDEX
+══════════════════════════════════════════════════════════════ */
+registerTab('kardex', async area => {
+  setPageHeader('Kardex', 'Línea de tiempo de stock por producto');
+
+  const [clientes, listas] = await Promise.all([
+    api('GET', '/api/clientes', { activos: '1' }),
+    api('GET', '/api/productos/listas'),
+  ]);
+
+  area.innerHTML = `
+    <div class="ds-card" style="margin-bottom:14px">
+      <div class="filter-row">
+        ${USR.rol !== 'CLIENTE' ? `
+        <div class="ds-field">
+          <label class="ds-label">Cliente</label>
+          <select id="kardexCliente" class="ds-select" style="min-width:180px">
+            <option value="">— Seleccione —</option>
+            ${(clientes?.data||[]).map(c => `<option value="${c.codigo}">${c.nombre}</option>`).join('')}
+          </select>
+        </div>` : ''}
+        <div class="ds-field">
+          <label class="ds-label">Desde</label>
+          <input type="date" id="kardexDesde" class="ds-input"
+            value="${new Date(new Date().setDate(1)).toISOString().slice(0,10)}">
+        </div>
+        <div class="ds-field">
+          <label class="ds-label">Hasta</label>
+          <input type="date" id="kardexHasta" class="ds-input"
+            value="${new Date().toISOString().slice(0,10)}">
+        </div>
+        <div class="ds-field" style="align-self:flex-end">
+          <button id="btnGenKardex" class="btn btn-primary"><i class="bi bi-search"></i>Generar</button>
+          <button id="btnExportKardex" class="btn btn-secondary" disabled style="margin-left:6px">
+            <i class="bi bi-download"></i>CSV
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="kardexResult">
+      <div style="padding:40px;text-align:center;color:var(--text-muted)">
+        <i class="bi bi-table" style="font-size:32px;display:block;margin-bottom:8px;opacity:.3"></i>
+        Selecciona cliente y periodo para generar el kardex.
+      </div>
+    </div>`;
+
+  $('btnGenKardex').addEventListener('click', generarKardex);
+
+  async function generarKardex() {
+    const codCli = USR.rol === 'CLIENTE'
+      ? USR.cliente_codigo
+      : ($('kardexCliente')?.value || clienteActual());
+    const desde  = $('kardexDesde').value;
+    const hasta  = $('kardexHasta').value;
+
+    if (!codCli) { toast('Selecciona un cliente.', 'warning'); return; }
+
+    $('kardexResult').innerHTML = `<div style="padding:16px">${skelRows(5)}</div>`;
+
+    const r = await api('GET', '/api/reportes/historial', {
+      cliente: codCli, desde, hasta,
+    });
+    const movs = r?.data || [];
+
+    if (!movs.length) {
+      $('kardexResult').innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)">Sin movimientos en el periodo.</div>`;
+      $('btnExportKardex').disabled = true;
+      return;
+    }
+
+    // Agrupar por producto
+    const porProducto = {};
+    movs.forEach(m => {
+      if (!porProducto[m.codigo]) {
+        porProducto[m.codigo] = { nombre: m.producto, movs: [] };
+      }
+      porProducto[m.codigo].movs.push(m);
+    });
+
+    let html = '';
+    Object.entries(porProducto).forEach(([codigo, prod]) => {
+      // Ordenar por fecha ASC para el saldo acumulado
+      const movsAsc = [...prod.movs].sort((a, b) =>
+        new Date(a.fecha_movimiento) - new Date(b.fecha_movimiento));
+
+      html += `
+        <div class="ds-card ds-card-flush" style="margin-bottom:14px">
+          <div style="padding:12px 18px 10px;display:flex;align-items:center;gap:10px">
+            <span class="chip">${codigo}</span>
+            <span style="font-weight:600;font-size:13px">${prod.nombre}</span>
+          </div>
+          <div class="ds-table-wrapper" style="border:none;border-radius:0">
+            <table class="ds-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Referencia</th>
+                  <th>Tipo</th>
+                  <th style="text-align:right">Entrada</th>
+                  <th style="text-align:right">Salida</th>
+                  <th style="text-align:right">Saldo</th>
+                  <th>Usuario</th>
+                </tr>
+              </thead>
+              <tbody>${movsAsc.map(m => {
+                const esEntrada = ['INGRESO','AJUSTE_POSITIVO','AJUSTE'].includes(m.tipo);
+                const esSalida  = ['SALIDA','AJUSTE_NEGATIVO'].includes(m.tipo);
+                return `
+                <tr>
+                  <td style="font-family:var(--font-mono);font-size:11px">${fmtDate(m.fecha_movimiento)}</td>
+                  <td style="font-size:11px;color:var(--text-muted)">${m.observaciones||'—'}</td>
+                  <td><span class="badge badge-${m.tipo.toLowerCase()}">${m.tipo.replace('_',' ')}</span></td>
+                  <td style="font-family:var(--font-mono);text-align:right;color:var(--success)">
+                    ${esEntrada ? fmtNum(m.cantidad) : '—'}
+                  </td>
+                  <td style="font-family:var(--font-mono);text-align:right;color:var(--danger)">
+                    ${esSalida ? fmtNum(m.cantidad) : '—'}
+                  </td>
+                  <td style="font-family:var(--font-mono);text-align:right;font-weight:600">
+                    ${fmtNum(m.stock_resultante)}
+                  </td>
+                  <td style="font-size:11px;color:var(--text-muted)">${m.registrado_por}</td>
+                </tr>`;
+              }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    });
+
+    $('kardexResult').innerHTML = html;
+
+    // Exportar CSV
+    const btnExp = $('btnExportKardex');
+    btnExp.disabled = false;
+    btnExp.onclick = () => exportarKardexCSV(porProducto, desde, hasta);
+  }
+
+  function exportarKardexCSV(porProducto, desde, hasta) {
+    const BOM  = '﻿';
+    const cab  = ['Codigo','Producto','Fecha','Referencia','Tipo','Entrada','Salida','Saldo','Usuario'];
+    const filas = [];
+    Object.entries(porProducto).forEach(([codigo, prod]) => {
+      [...prod.movs]
+        .sort((a,b) => new Date(a.fecha_movimiento) - new Date(b.fecha_movimiento))
+        .forEach(m => {
+          const esEntrada = ['INGRESO','AJUSTE_POSITIVO','AJUSTE'].includes(m.tipo);
+          const esSalida  = ['SALIDA','AJUSTE_NEGATIVO'].includes(m.tipo);
+          filas.push([
+            codigo, prod.nombre, m.fecha_movimiento,
+            m.observaciones||'', m.tipo,
+            esEntrada ? m.cantidad : '',
+            esSalida  ? m.cantidad : '',
+            m.stock_resultante, m.registrado_por,
+          ].map(v => `"${String(v??'').replace(/"/g,'""')}"`).join(','));
+        });
+    });
+    const csv  = BOM + [cab.join(','), ...filas].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `Kardex_${desde}_${hasta}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 });
 
 /* ══════════════════════════════════════════════════════════════

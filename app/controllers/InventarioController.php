@@ -50,4 +50,30 @@ class InventarioController {
         fclose($out);
         exit;
     }
+    public function actualizarStockMin(): void {
+    Auth::requireSeccion('inventario');
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $codCli   = strtoupper(trim($body['cliente'] ?? ''));
+    $codProd  = strtoupper(trim($body['codigo']  ?? ''));
+    $stockMin = max(0, (float)($body['stock_min'] ?? 0));
+
+    $cli  = $this->clienteModel->findByCodigo($codCli);
+    if (!$cli) Response::error('Cliente no encontrado.', 404);
+
+    $prod = (new ProductoModel())->findByCodigo($codProd);
+    if (!$prod) Response::error('Producto no encontrado.', 404);
+
+    $db   = Database::getInstance()->getConnection();
+    $stmt = $db->prepare("
+        UPDATE producto_cliente
+        SET stock_min = ?
+        WHERE id_cliente = ? AND id_producto = ?
+    ");
+    $stmt->execute([$stockMin, $cli['id'], $prod['id']]);
+
+    if ($stmt->rowCount() === 0) {
+        Response::error('Relación producto-cliente no encontrada.');
+    }
+    Response::ok(null, 'Stock mínimo actualizado correctamente.');
+}
 }
